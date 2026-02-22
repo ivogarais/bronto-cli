@@ -1,0 +1,5 @@
+{
+  "version": "1",
+  "title": "Errors (Last 30m)",
+  "refresh": { "everyMs": 2000 }
+}

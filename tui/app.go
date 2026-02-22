@@ -11,19 +11,26 @@ import (
 type tickMsg time.Time
 
 type Model struct {
-	title   string
-	spec    string
-	started time.Time
-	now     time.Time
+	Title          string
+	SpecPath       string
+	RefreshEveryMs int
+
+	StartedAt time.Time
+	Now       time.Time
+	Status    string
+	Width     int
+	Height    int
 }
 
-func NewModel(title, spec string) Model {
-	t := time.Now()
+func NewModel(title, specPath string, refreshEveryMs int) Model {
+	now := time.Now()
 	return Model{
-		title:   title,
-		spec:    spec,
-		started: t,
-		now:     t,
+		Title:          title,
+		SpecPath:       specPath,
+		RefreshEveryMs: refreshEveryMs,
+		StartedAt:      now,
+		Now:            now,
+		Status:         "Running (spec loaded; no MCP yet)",
 	}
 }
 
@@ -43,23 +50,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tickMsg:
-		m.now = time.Time(msg)
+		m.Now = time.Time(msg)
 		return m, tick()
 	}
 	return m, nil
 }
 
 func (m Model) View() string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(m.title)
-	label := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	uptime := m.now.Sub(m.started).Round(time.Second).String()
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(m.Title)
+	uptime := m.Now.Sub(m.StartedAt).Round(time.Second).String()
 
-	return fmt.Sprintf(
-		"%s\n\n%s %s\n%s %s\n%s %s\n\n%s",
-		title,
-		label.Render("Spec:"), m.spec,
-		label.Render("Started:"), m.started.Format(time.RFC3339),
-		label.Render("Uptime:"), uptime,
-		label.Render("Press q or ctrl+c to quit."),
+	refresh := "default (1000ms)"
+	if m.RefreshEveryMs > 0 {
+		refresh = fmt.Sprintf("%dms", m.RefreshEveryMs)
+	}
+
+	body := fmt.Sprintf(
+		"Spec:    %s\nStatus:  %s\nRefresh: %s\nUptime:  %s\n\nPress q to quit.",
+		m.SpecPath,
+		m.Status,
+		refresh,
+		uptime,
 	)
+
+	return fmt.Sprintf("%s\n\n%s", title, body)
 }

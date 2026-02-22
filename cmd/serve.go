@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ivogarais/bronto-cli/spec"
 	"github.com/ivogarais/bronto-cli/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,7 +22,12 @@ var serveCmd = &cobra.Command{
 			return errors.New("missing required flag: --spec <path>")
 		}
 
-		m := tui.NewModel("Bronto Dashboard", specPath)
+		s, err := spec.Load(specPath)
+		if err != nil {
+			return err
+		}
+
+		m := tui.NewModel(s.Title, specPath, s.Refresh.EveryMs)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
