@@ -44,8 +44,10 @@
   "charts": {
     "errorsByService": {
       "family": "bar",
-      "orientation": "horizontal",
       "datasetRef": "errors_by_service",
+      "bar": {
+        "orientation": "horizontal"
+      },
       "render": {
         "mode": "ascii",
         "showAxis": true

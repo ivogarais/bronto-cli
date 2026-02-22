@@ -271,12 +271,23 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 
 	case "chart":
 		title := n.Title
+		chartSpec, chartFound := m.Spec.Charts[n.ChartRef]
+		if title == "" && chartFound && chartSpec.Title != "" {
+			title = chartSpec.Title
+		}
 		if title == "" {
 			title = n.ChartRef
 		}
+
 		content := "(missing chart)"
 		if c, ok := m.Charts[n.ChartRef]; ok {
 			content = c.View()
+		} else if chartFound {
+			if chartSpec.Family != "bar" {
+				content = fmt.Sprintf("unsupported chart family %q (renderer currently implements bar only)", chartSpec.Family)
+			} else {
+				content = "(chart data unavailable)"
+			}
 		}
 		return renderPanel(title, content, width)
 

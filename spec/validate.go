@@ -2,6 +2,8 @@ package spec
 
 import (
 	"fmt"
+	"time"
+	"unicode/utf8"
 )
 
 func (s *AppSpec) Validate() error {
@@ -12,7 +14,6 @@ func (s *AppSpec) Validate() error {
 		return fmt.Errorf("spec invalid: missing title")
 	}
 
-	// Theme
 	if s.Theme.Brand == "" {
 		s.Theme.Brand = "bronto"
 	}
@@ -24,7 +25,6 @@ func (s *AppSpec) Validate() error {
 		return fmt.Errorf("spec invalid: theme.density must be compact|comfortable")
 	}
 
-	// Require maps
 	if len(s.Datasets) == 0 {
 		return fmt.Errorf("spec invalid: datasets must be non-empty")
 	}
@@ -32,7 +32,6 @@ func (s *AppSpec) Validate() error {
 		return fmt.Errorf("spec invalid: at least one of charts or tables must be non-empty")
 	}
 
-	// Validate datasets
 	for id, d := range s.Datasets {
 		if id == "" {
 			return fmt.Errorf("spec invalid: dataset id cannot be empty")
@@ -42,7 +41,6 @@ func (s *AppSpec) Validate() error {
 		}
 	}
 
-	// Validate charts
 	for id, c := range s.Charts {
 		if id == "" {
 			return fmt.Errorf("spec invalid: chart id cannot be empty")
@@ -54,7 +52,6 @@ func (s *AppSpec) Validate() error {
 		s.Charts[id] = normalized
 	}
 
-	// Validate tables
 	for id, t := range s.Tables {
 		if id == "" {
 			return fmt.Errorf("spec invalid: table id cannot be empty")
@@ -66,7 +63,6 @@ func (s *AppSpec) Validate() error {
 		s.Tables[id] = normalized
 	}
 
-	// Validate layout tree references
 	seen := map[string]bool{}
 	if err := validateNode(s.Layout, s.Charts, s.Tables, seen); err != nil {
 		return err
@@ -87,45 +83,352 @@ func validateDataset(id string, d DatasetSpec) error {
 		if len(d.Labels) != len(d.Values) {
 			return fmt.Errorf("spec invalid: dataset %q categorySeries labels/values length mismatch", id)
 		}
+
 	case "table":
 		if len(d.Columns) == 0 {
 			return fmt.Errorf("spec invalid: dataset %q table columns must be non-empty", id)
 		}
-		// rows can be empty (still render)
+		seenCols := map[string]bool{}
+		for i, c := range d.Columns {
+			if c == "" {
+				return fmt.Errorf("spec invalid: dataset %q table column[%d] must be non-empty", id, i)
+			}
+			if seenCols[c] {
+				return fmt.Errorf("spec invalid: dataset %q table has duplicate column %q", id, c)
+			}
+			seenCols[c] = true
+		}
 		for i, r := range d.Rows {
 			if len(r) != len(d.Columns) {
 				return fmt.Errorf("spec invalid: dataset %q row %d has %d cells; expected %d", id, i, len(r), len(d.Columns))
 			}
 		}
+
+	case "xySeries":
+		if len(d.XY) == 0 {
+			return fmt.Errorf("spec invalid: dataset %q xySeries must include non-empty \"xy\"", id)
+		}
+		seen := map[string]bool{}
+		for i, series := range d.XY {
+			if series.Name == "" {
+				return fmt.Errorf("spec invalid: dataset %q xy[%d] missing series name", id, i)
+			}
+			if seen[series.Name] {
+				return fmt.Errorf("spec invalid: dataset %q duplicate xy series %q", id, series.Name)
+			}
+			seen[series.Name] = true
+			if len(series.Points) == 0 {
+				return fmt.Errorf("spec invalid: dataset %q xy series %q must have at least one point", id, series.Name)
+			}
+		}
+
+	case "timeSeries":
+		if len(d.Time) == 0 {
+			return fmt.Errorf("spec invalid: dataset %q timeSeries must include non-empty \"time\"", id)
+		}
+		seen := map[string]bool{}
+		for i, series := range d.Time {
+			if series.Name == "" {
+				return fmt.Errorf("spec invalid: dataset %q time[%d] missing series name", id, i)
+			}
+			if seen[series.Name] {
+				return fmt.Errorf("spec invalid: dataset %q duplicate time series %q", id, series.Name)
+			}
+			seen[series.Name] = true
+			if len(series.Points) == 0 {
+				return fmt.Errorf("spec invalid: dataset %q time series %q must have at least one point", id, series.Name)
+			}
+			for j, p := range series.Points {
+				if p.T == "" {
+					return fmt.Errorf("spec invalid: dataset %q time series %q point[%d] missing t", id, series.Name, j)
+				}
+				if _, err := time.Parse(time.RFC3339, p.T); err != nil {
+					return fmt.Errorf("spec invalid: dataset %q time series %q point[%d] invalid RFC3339 timestamp %q", id, series.Name, j, p.T)
+				}
+			}
+		}
+
+	case "ohlcSeries":
+		if len(d.Candles) == 0 {
+			return fmt.Errorf("spec invalid: dataset %q ohlcSeries must include non-empty \"candles\"", id)
+		}
+		for i, c := range d.Candles {
+			if c.T == "" {
+				return fmt.Errorf("spec invalid: dataset %q candles[%d] missing t", id, i)
+			}
+			if _, err := time.Parse(time.RFC3339, c.T); err != nil {
+				return fmt.Errorf("spec invalid: dataset %q candles[%d] invalid RFC3339 timestamp %q", id, i, c.T)
+			}
+			if c.High < c.Low {
+				return fmt.Errorf("spec invalid: dataset %q candles[%d] high must be >= low", id, i)
+			}
+			if c.Open < c.Low || c.Open > c.High {
+				return fmt.Errorf("spec invalid: dataset %q candles[%d] open must be in [low, high]", id, i)
+			}
+			if c.Close < c.Low || c.Close > c.High {
+				return fmt.Errorf("spec invalid: dataset %q candles[%d] close must be in [low, high]", id, i)
+			}
+		}
+
+	case "heatmapCells":
+		if d.Heatmap == nil {
+			return fmt.Errorf("spec invalid: dataset %q heatmapCells requires non-null heatmap", id)
+		}
+		h := d.Heatmap
+		dense := h.Width != 0 || h.Height != 0 || len(h.Values) > 0
+		sparse := len(h.Cells) > 0
+		if dense && sparse {
+			return fmt.Errorf("spec invalid: dataset %q heatmap must be dense or sparse, not both", id)
+		}
+		if !dense && !sparse {
+			return fmt.Errorf("spec invalid: dataset %q heatmap must define dense values or sparse cells", id)
+		}
+		if dense {
+			if h.Width <= 0 || h.Height <= 0 {
+				return fmt.Errorf("spec invalid: dataset %q dense heatmap requires width>0 and height>0", id)
+			}
+			expected := h.Width * h.Height
+			if len(h.Values) != expected {
+				return fmt.Errorf("spec invalid: dataset %q dense heatmap values length must be width*height (%d)", id, expected)
+			}
+		}
+		if sparse {
+			for i, cell := range h.Cells {
+				if cell.X < 0 || cell.Y < 0 {
+					return fmt.Errorf("spec invalid: dataset %q heatmap cell[%d] x/y must be >= 0", id, i)
+				}
+				if h.Width > 0 && cell.X >= h.Width {
+					return fmt.Errorf("spec invalid: dataset %q heatmap cell[%d] x out of range", id, i)
+				}
+				if h.Height > 0 && cell.Y >= h.Height {
+					return fmt.Errorf("spec invalid: dataset %q heatmap cell[%d] y out of range", id, i)
+				}
+			}
+		}
+
+	case "valueSeries":
+		if len(d.Value) == 0 {
+			return fmt.Errorf("spec invalid: dataset %q valueSeries must include non-empty \"value\"", id)
+		}
+
 	default:
 		return fmt.Errorf("spec invalid: dataset %q has unsupported kind %q", id, d.Kind)
 	}
+
 	return nil
 }
 
 func validateChart(id string, c ChartSpec, datasets map[string]DatasetSpec) (ChartSpec, error) {
+	if c.DatasetRef == "" {
+		return ChartSpec{}, fmt.Errorf("spec invalid: chart %q missing datasetRef", id)
+	}
+	d, ok := datasets[c.DatasetRef]
+	if !ok {
+		return ChartSpec{}, fmt.Errorf("spec invalid: chart %q references missing dataset %q", id, c.DatasetRef)
+	}
+
+	if c.Render.Mode != "" && c.Render.Mode != "ascii" && c.Render.Mode != "braille" {
+		return ChartSpec{}, fmt.Errorf("spec invalid: chart %q render.mode must be ascii|braille", id)
+	}
+
+	optionCount := countChartOptionBlocks(c)
+
 	switch c.Family {
 	case "bar":
-		if c.Orientation == "" {
-			c.Orientation = "horizontal"
+		if c.Bar == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"bar\" options", id, c.Family)
 		}
-		if c.Orientation != "horizontal" && c.Orientation != "vertical" {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q bar orientation must be horizontal|vertical", id)
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
 		}
-		if c.DatasetRef == "" {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q missing datasetRef", id)
+		if c.Bar.Orientation == "" {
+			c.Bar.Orientation = "horizontal"
 		}
-		d, ok := datasets[c.DatasetRef]
-		if !ok {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q references missing dataset %q", id, c.DatasetRef)
+		if c.Bar.Orientation != "horizontal" && c.Bar.Orientation != "vertical" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q bar.orientation must be horizontal|vertical", id)
 		}
 		if d.Kind != "categorySeries" {
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects categorySeries dataset; got %q", id, d.Kind)
 		}
+
+	case "heatmap":
+		if c.Heatmap == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"heatmap\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.Heatmap.Min != nil && c.Heatmap.Max != nil && *c.Heatmap.Min > *c.Heatmap.Max {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q heatmap.min must be <= heatmap.max", id)
+		}
+		if d.Kind != "heatmapCells" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects heatmapCells dataset; got %q", id, d.Kind)
+		}
+
+	case "line":
+		if c.Line == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"line\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.Line.Style.Interpolation != "" && c.Line.Style.Interpolation != "linear" && c.Line.Style.Interpolation != "step" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q line.style.interpolation must be linear|step", id)
+		}
+		if err := validateSeriesRefs(c.Line.Series, fmt.Sprintf("chart %q line.series", id)); err != nil {
+			return ChartSpec{}, err
+		}
+		if d.Kind != "xySeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects xySeries dataset; got %q", id, d.Kind)
+		}
+
+	case "ohlc":
+		if c.OHLC == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"ohlc\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.OHLC.Style == "" {
+			c.OHLC.Style = "candle"
+		}
+		if c.OHLC.Style != "candle" && c.OHLC.Style != "ohlc" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q ohlc.style must be candle|ohlc", id)
+		}
+		if d.Kind != "ohlcSeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects ohlcSeries dataset; got %q", id, d.Kind)
+		}
+
+	case "scatter":
+		if c.Scatter == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"scatter\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.Scatter.PointRune != "" && utf8.RuneCountInString(c.Scatter.PointRune) != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q scatter.pointRune must be a single rune", id)
+		}
+		if d.Kind != "xySeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects xySeries dataset; got %q", id, d.Kind)
+		}
+
+	case "streamline":
+		if c.Stream == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"streamline\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.Stream.Window < 0 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q streamline.window must be >= 0", id)
+		}
+		if c.Stream.Window == 0 {
+			c.Stream.Window = 120
+		}
+		if d.Kind != "valueSeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects valueSeries dataset; got %q", id, d.Kind)
+		}
+
+	case "timeseries":
+		if c.TimeSeries == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"timeseries\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if err := validateSeriesRefs(c.TimeSeries.Series, fmt.Sprintf("chart %q timeseries.series", id)); err != nil {
+			return ChartSpec{}, err
+		}
+		if d.Kind != "timeSeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects timeSeries dataset; got %q", id, d.Kind)
+		}
+
+	case "waveline":
+		if c.Waveline == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"waveline\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if err := validateSeriesRefs(c.Waveline.Series, fmt.Sprintf("chart %q waveline.series", id)); err != nil {
+			return ChartSpec{}, err
+		}
+		if d.Kind != "xySeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects xySeries dataset; got %q", id, d.Kind)
+		}
+
+	case "sparkline":
+		if c.Sparkline == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"sparkline\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
+		}
+		if c.Sparkline.Window < 0 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q sparkline.window must be >= 0", id)
+		}
+		if c.Sparkline.Window == 0 {
+			c.Sparkline.Window = 120
+		}
+		if d.Kind != "valueSeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects valueSeries dataset; got %q", id, d.Kind)
+		}
+
 	default:
 		return ChartSpec{}, fmt.Errorf("spec invalid: chart %q unsupported family %q", id, c.Family)
 	}
+
 	return c, nil
+}
+
+func validateSeriesRefs(refs []SeriesRef, field string) error {
+	seen := map[string]bool{}
+	for i, r := range refs {
+		if r.Name == "" {
+			return fmt.Errorf("spec invalid: %s[%d] missing name", field, i)
+		}
+		if seen[r.Name] {
+			return fmt.Errorf("spec invalid: %s has duplicate series name %q", field, r.Name)
+		}
+		seen[r.Name] = true
+		if r.Variant != "" && r.Variant != "primary" && r.Variant != "muted" && r.Variant != "danger" {
+			return fmt.Errorf("spec invalid: %s[%d] variant must be primary|muted|danger", field, i)
+		}
+	}
+	return nil
+}
+
+func countChartOptionBlocks(c ChartSpec) int {
+	count := 0
+	if c.Bar != nil {
+		count++
+	}
+	if c.Heatmap != nil {
+		count++
+	}
+	if c.Line != nil {
+		count++
+	}
+	if c.OHLC != nil {
+		count++
+	}
+	if c.Scatter != nil {
+		count++
+	}
+	if c.Stream != nil {
+		count++
+	}
+	if c.TimeSeries != nil {
+		count++
+	}
+	if c.Waveline != nil {
+		count++
+	}
+	if c.Sparkline != nil {
+		count++
+	}
+	return count
 }
 
 func validateTable(id string, t TableSpec, datasets map[string]DatasetSpec) (TableSpec, error) {
@@ -145,9 +448,18 @@ func validateTable(id string, t TableSpec, datasets map[string]DatasetSpec) (Tab
 	if t.RowLimit == 0 {
 		t.RowLimit = 200
 	}
+
+	datasetCols := map[string]bool{}
+	for _, c := range d.Columns {
+		datasetCols[c] = true
+	}
+
 	for i, c := range t.Columns {
 		if c.Key == "" || c.Title == "" {
 			return TableSpec{}, fmt.Errorf("spec invalid: table %q column[%d] missing key/title", id, i)
+		}
+		if !datasetCols[c.Key] {
+			return TableSpec{}, fmt.Errorf("spec invalid: table %q column[%d] key %q not found in dataset columns", id, i, c.Key)
 		}
 		switch w := c.Width.(type) {
 		case string:
@@ -179,6 +491,10 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 	}
 	seenIDs[n.ID] = true
 
+	if n.Gap < 0 {
+		return fmt.Errorf("spec invalid: layout node %q gap must be >= 0", n.ID)
+	}
+
 	switch n.Type {
 	case "col":
 		if len(n.Children) == 0 {
@@ -189,22 +505,32 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 				return err
 			}
 		}
+
 	case "row":
 		if len(n.Children) == 0 {
 			return fmt.Errorf("spec invalid: row %q must have children", n.ID)
 		}
-		if len(n.Weights) > 0 && len(n.Weights) != len(n.Children) {
-			return fmt.Errorf("spec invalid: row %q weights length must equal children length", n.ID)
+		if len(n.Weights) > 0 {
+			if len(n.Weights) != len(n.Children) {
+				return fmt.Errorf("spec invalid: row %q weights length must equal children length", n.ID)
+			}
+			for i, w := range n.Weights {
+				if w <= 0 {
+					return fmt.Errorf("spec invalid: row %q weights[%d] must be > 0", n.ID, i)
+				}
+			}
 		}
 		for _, ch := range n.Children {
 			if err := validateNode(ch, charts, tables, seenIDs); err != nil {
 				return err
 			}
 		}
+
 	case "header":
 		if n.TitleRef != "$title" {
 			return fmt.Errorf("spec invalid: header %q titleRef must be %q", n.ID, "$title")
 		}
+
 	case "chart":
 		if n.ChartRef == "" {
 			return fmt.Errorf("spec invalid: chart node %q missing chartRef", n.ID)
@@ -212,6 +538,7 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 		if _, ok := charts[n.ChartRef]; !ok {
 			return fmt.Errorf("spec invalid: chart node %q references missing chart %q", n.ID, n.ChartRef)
 		}
+
 	case "table":
 		if n.TableRef == "" {
 			return fmt.Errorf("spec invalid: table node %q missing tableRef", n.ID)
@@ -219,12 +546,18 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 		if _, ok := tables[n.TableRef]; !ok {
 			return fmt.Errorf("spec invalid: table node %q references missing table %q", n.ID, n.TableRef)
 		}
+
 	case "text":
 		if n.Text == "" {
 			return fmt.Errorf("spec invalid: text node %q missing text", n.ID)
 		}
+		if n.Variant != "" && n.Variant != "muted" && n.Variant != "primary" && n.Variant != "danger" {
+			return fmt.Errorf("spec invalid: text node %q variant must be muted|primary|danger", n.ID)
+		}
+
 	default:
 		return fmt.Errorf("spec invalid: unsupported layout node type %q", n.Type)
 	}
+
 	return nil
 }
