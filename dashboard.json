@@ -1,5 +1,6 @@
 {
   "version": "bronto-tui/v1",
+  "name": "errors-dashboard",
   "title": "Errors (Last 30m)",
   "theme": {
     "brand": "bronto",
@@ -18,6 +19,15 @@
     "generatedBy": "codex",
     "generatedAt": "2026-02-22T16:20:00Z",
     "requestId": "demo-v1"
+  },
+  "capabilities": {
+    "charts": [
+      "bar"
+    ],
+    "renderModes": [
+      "ascii"
+    ],
+    "tables": true
   },
   "layout": {
     "type": "col",
@@ -61,10 +71,6 @@
       "datasetRef": "errors_by_service",
       "bar": {
         "orientation": "horizontal"
-      },
-      "render": {
-        "mode": "ascii",
-        "showAxis": true
       }
     }
   },

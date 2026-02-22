@@ -3,15 +3,17 @@ package spec
 // ---------- Top-level ----------
 
 type AppSpec struct {
-	Version  string                 `json:"version"`
-	Title    string                 `json:"title"`
-	Theme    ThemeSpec              `json:"theme"`
-	Defaults DefaultsSpec           `json:"defaults,omitempty"`
-	Meta     MetaSpec               `json:"meta,omitempty"`
-	Layout   Node                   `json:"layout"`
-	Charts   map[string]ChartSpec   `json:"charts"`
-	Tables   map[string]TableSpec   `json:"tables"`
-	Datasets map[string]DatasetSpec `json:"datasets"`
+	Version      string                 `json:"version"`
+	Name         string                 `json:"name,omitempty"` // optional friendly id, e.g. "errors-dashboard"
+	Title        string                 `json:"title"`
+	Theme        ThemeSpec              `json:"theme"`
+	Defaults     DefaultsSpec           `json:"defaults,omitempty"`
+	Meta         MetaSpec               `json:"meta,omitempty"`
+	Capabilities CapabilitiesSpec       `json:"capabilities,omitempty"`
+	Layout       Node                   `json:"layout"`
+	Charts       map[string]ChartSpec   `json:"charts"`
+	Tables       map[string]TableSpec   `json:"tables"`
+	Datasets     map[string]DatasetSpec `json:"datasets"`
 }
 
 type ThemeSpec struct {
@@ -32,6 +34,12 @@ type MetaSpec struct {
 	GeneratedBy string `json:"generatedBy,omitempty"` // "codex", "claude", etc.
 	GeneratedAt string `json:"generatedAt,omitempty"` // RFC3339
 	RequestID   string `json:"requestId,omitempty"`
+}
+
+type CapabilitiesSpec struct {
+	Charts      []string `json:"charts,omitempty"`      // supported chart families in this renderer
+	RenderModes []string `json:"renderModes,omitempty"` // ascii|braille
+	Tables      *bool    `json:"tables,omitempty"`      // table rendering supported
 }
 
 // ---------- Layout Node (tagged union) ----------

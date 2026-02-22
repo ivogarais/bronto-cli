@@ -3,6 +3,7 @@ package spec
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -14,11 +15,19 @@ func (s *AppSpec) Validate() error {
 	if s.Title == "" {
 		return fmt.Errorf("spec invalid: missing title")
 	}
+	if s.Name != "" {
+		if strings.TrimSpace(s.Name) == "" {
+			return fmt.Errorf("spec invalid: name must not be whitespace-only")
+		}
+	}
 
 	if s.Meta.GeneratedAt != "" {
 		if _, err := time.Parse(time.RFC3339, s.Meta.GeneratedAt); err != nil {
 			return fmt.Errorf("spec invalid: meta.generatedAt must be RFC3339")
 		}
+	}
+	if err := validateCapabilities(s.Capabilities); err != nil {
+		return err
 	}
 
 	if s.Defaults.ChartRender.Mode != "" && s.Defaults.ChartRender.Mode != "ascii" && s.Defaults.ChartRender.Mode != "braille" {
@@ -93,6 +102,14 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 	default:
 		return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q format must be number|bytes|duration", id)
 	}
+	if d.Unit != "" {
+		if strings.TrimSpace(d.Unit) == "" {
+			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q unit must not be whitespace-only", id)
+		}
+		if len(d.Unit) > 16 {
+			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q unit length must be <= 16", id)
+		}
+	}
 
 	switch d.Kind {
 	case "categorySeries":
@@ -161,20 +178,30 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 			if len(series.Points) == 0 {
 				return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q time series %q must have at least one point", id, series.Name)
 			}
+			type timedPoint struct {
+				t time.Time
+				p TimePoint
+			}
+			timed := make([]timedPoint, len(series.Points))
 			for j, p := range series.Points {
 				if p.T == "" {
 					return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q time series %q point[%d] missing t", id, series.Name, j)
 				}
-				if _, err := time.Parse(time.RFC3339, p.T); err != nil {
+				parsed, err := time.Parse(time.RFC3339, p.T)
+				if err != nil {
 					return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q time series %q point[%d] invalid RFC3339 timestamp %q", id, series.Name, j, p.T)
 				}
+				timed[j] = timedPoint{t: parsed, p: p}
 			}
 
-			sort.Slice(series.Points, func(a, b int) bool {
-				ta, _ := time.Parse(time.RFC3339, series.Points[a].T)
-				tb, _ := time.Parse(time.RFC3339, series.Points[b].T)
-				return ta.Before(tb)
+			sort.Slice(timed, func(a, b int) bool {
+				return timed[a].t.Before(timed[b].t)
 			})
+			sorted := make([]TimePoint, len(timed))
+			for j := range timed {
+				sorted[j] = timed[j].p
+			}
+			series.Points = sorted
 			d.Time[i] = series
 		}
 
@@ -182,11 +209,17 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		if len(d.Candles) == 0 {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q ohlcSeries must include non-empty \"candles\"", id)
 		}
+		type timedCandle struct {
+			t time.Time
+			c Candle
+		}
+		timed := make([]timedCandle, len(d.Candles))
 		for i, c := range d.Candles {
 			if c.T == "" {
 				return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q candles[%d] missing t", id, i)
 			}
-			if _, err := time.Parse(time.RFC3339, c.T); err != nil {
+			parsed, err := time.Parse(time.RFC3339, c.T)
+			if err != nil {
 				return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q candles[%d] invalid RFC3339 timestamp %q", id, i, c.T)
 			}
 			if c.High < c.Low {
@@ -198,12 +231,16 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 			if c.Close < c.Low || c.Close > c.High {
 				return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q candles[%d] close must be in [low, high]", id, i)
 			}
+			timed[i] = timedCandle{t: parsed, c: c}
 		}
-		sort.Slice(d.Candles, func(i, j int) bool {
-			ti, _ := time.Parse(time.RFC3339, d.Candles[i].T)
-			tj, _ := time.Parse(time.RFC3339, d.Candles[j].T)
-			return ti.Before(tj)
+		sort.Slice(timed, func(i, j int) bool {
+			return timed[i].t.Before(timed[j].t)
 		})
+		sorted := make([]Candle, len(timed))
+		for i := range timed {
+			sorted[i] = timed[i].c
+		}
+		d.Candles = sorted
 
 	case "heatmapCells":
 		if d.Heatmap == nil {
@@ -642,4 +679,44 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
+}
+
+func validateCapabilities(c CapabilitiesSpec) error {
+	if len(c.Charts) > 0 {
+		seen := map[string]bool{}
+		for i, family := range c.Charts {
+			if family == "" {
+				return fmt.Errorf("spec invalid: capabilities.charts[%d] must be non-empty", i)
+			}
+			if seen[family] {
+				return fmt.Errorf("spec invalid: capabilities.charts has duplicate %q", family)
+			}
+			seen[family] = true
+			if !isKnownChartFamily(family) {
+				return fmt.Errorf("spec invalid: capabilities.charts[%d] unsupported family %q", i, family)
+			}
+		}
+	}
+	if len(c.RenderModes) > 0 {
+		seen := map[string]bool{}
+		for i, mode := range c.RenderModes {
+			if mode != "ascii" && mode != "braille" {
+				return fmt.Errorf("spec invalid: capabilities.renderModes[%d] must be ascii|braille", i)
+			}
+			if seen[mode] {
+				return fmt.Errorf("spec invalid: capabilities.renderModes has duplicate %q", mode)
+			}
+			seen[mode] = true
+		}
+	}
+	return nil
+}
+
+func isKnownChartFamily(f string) bool {
+	switch f {
+	case "bar", "heatmap", "line", "ohlc", "scatter", "streamline", "timeseries", "waveline", "sparkline":
+		return true
+	default:
+		return false
+	}
 }
