@@ -19,6 +19,13 @@ type Model struct {
 	SpecPath string
 	Theme    brontotheme.BrontoTheme
 
+	HasChartsTab bool
+	HasLogsTab   bool
+	ActiveTab    string
+
+	chartsLayout spec.Node
+	logsLayout   spec.Node
+
 	Charts map[string]barchart.Model
 	Lines  map[string]linechart.Model
 	Tables map[string]table.Model
@@ -60,6 +67,7 @@ func NewModel(s *spec.AppSpec, specPath string) Model {
 		LoadedAt:        time.Now(),
 	}
 
+	m.applyDefaultLayoutStructure()
 	m.resolveComponents()
 	m.indexFocusablePanels()
 	m.resizeForLayout(120, 36)
@@ -80,6 +88,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 				m.TableFilterMode = false
+			}
+		}
+
+		if m.hasTabs() {
+			switch msg.String() {
+			case "c":
+				if m.switchTab(tabCharts) {
+					return m, nil
+				}
+			case "l":
+				if m.switchTab(tabLogs) {
+					return m, nil
+				}
 			}
 		}
 
@@ -142,7 +163,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.TableFilter[tableRef] = ""
 				}
 				return m, nil
-			case "c":
+			case "x":
 				if m.TableFilter[tableRef] != "" {
 					m.TableFilter[tableRef] = ""
 					m.applyTableFilter(tableRef)
@@ -251,9 +272,9 @@ func (m Model) View() tea.View {
 			case m.TableFilterMode:
 				hints = append(hints, m.Theme.Primary.Render(fmt.Sprintf("filter> %s_", query)))
 			case query != "":
-				hints = append(hints, m.Theme.Muted.Render(fmt.Sprintf("filter: %q ( / edit | c clear )", query)))
+				hints = append(hints, m.Theme.Muted.Render(fmt.Sprintf("filter: %q ( / edit | x clear )", query)))
 			default:
-				hints = append(hints, m.Theme.Muted.Render("table controls: arrows/pgup/pgdn | / filter | c clear"))
+				hints = append(hints, m.Theme.Muted.Render("table controls: arrows/pgup/pgdn | / filter | x clear"))
 			}
 		} else {
 			hints = append(hints, m.Theme.Muted.Render("scroll focused panel: up/down | pgup/pgdn | home/end"))

@@ -191,10 +191,6 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 				return
 			}
 			m.Lines[n.ChartRef] = lc
-
-		case "pie":
-			// Pie rendering is stateless and generated directly in View().
-			return
 		}
 
 	case "table":
@@ -290,9 +286,17 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		if m.Spec != nil && n.TitleRef == "$title" {
 			title = m.Spec.Title
 		}
+		hints := "(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus)"
+		if m.hasTabs() {
+			hints = "(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus | c charts | l logs)"
+		}
+		subtitle := n.SubTitle
+		if subtitle == "" {
+			subtitle = hints
+		}
 		header := fmt.Sprintf("%s\n%s",
 			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
-			m.Theme.Muted.Render("(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus)"),
+			m.Theme.Muted.Render(subtitle),
 		)
 		header = trimTrailingWhitespace(header)
 
@@ -332,12 +336,6 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 			case "line":
 				if lc, ok := m.Lines[n.ChartRef]; ok {
 					content = lc.View()
-				} else {
-					content = "(chart data unavailable)"
-				}
-			case "pie":
-				if ds, ok := m.Spec.Datasets[chartSpec.DatasetRef]; ok {
-					content = renderPieChart(m.Theme, ds, width, height)
 				} else {
 					content = "(chart data unavailable)"
 				}

@@ -12,24 +12,25 @@
     "id": "root",
     "gap": 1,
     "children": [
-      { "type": "header", "id": "hdr", "titleRef": "$title", "subTitle": "bar + line + pie + table" },
+      { "type": "header", "id": "hdr", "titleRef": "$title", "subTitle": "bar + line + table" },
       {
         "type": "row",
         "id": "charts_row",
         "gap": 1,
-        "weights": [2, 2, 2],
+        "weights": [1, 1],
         "children": [
           { "type": "chart", "id": "p_bar", "title": "Errors by Type (Bar)", "chartRef": "errorsBar" },
-          { "type": "chart", "id": "p_line", "title": "Latency Trend (Line)", "chartRef": "latencyLine" },
-          { "type": "chart", "id": "p_pie", "title": "Error Share (Pie)", "chartRef": "errorsPie" }
+          { "type": "chart", "id": "p_line", "title": "Latency Trend (Line)", "chartRef": "latencyLine" }
         ]
       },
       {
         "type": "row",
         "id": "table_row",
         "gap": 1,
+        "weights": [1, 1],
         "children": [
-          { "type": "table", "id": "p_table", "title": "Latest Errors", "tableRef": "latestErrors" }
+          { "type": "table", "id": "p_table", "title": "Latest Errors", "tableRef": "latestErrors" },
+          { "type": "table", "id": "p_table_warnings", "title": "Latest Warnings", "tableRef": "latestWarnings" }
         ]
       }
     ]
@@ -50,11 +51,6 @@
         ],
         "style": { "interpolation": "linear", "markers": true }
       }
-    },
-    "errorsPie": {
-      "family": "pie",
-      "datasetRef": "errors_by_type",
-      "pie": { "donut": true }
     }
   },
   "tables": {
@@ -64,6 +60,15 @@
         { "key": "ts", "title": "ts", "width": "auto" },
         { "key": "service", "title": "service", "width": 14 },
         { "key": "message", "title": "message", "width": "flex" }
+      ],
+      "rowLimit": 200
+    },
+    "latestWarnings": {
+      "datasetRef": "latest_warnings",
+      "columns": [
+        { "key": "ts", "title": "ts", "width": "auto" },
+        { "key": "service", "title": "service", "width": 14 },
+        { "key": "warning", "title": "warning", "width": "flex" }
       ],
       "rowLimit": 200
     }
@@ -112,6 +117,17 @@
         ["2026-02-22T12:00:04Z", "web", "500 /checkout"],
         ["2026-02-22T12:00:05Z", "api", "bad request payload"],
         ["2026-02-22T12:00:08Z", "worker", "upstream rate limited"]
+      ]
+    },
+    "latest_warnings": {
+      "kind": "table",
+      "columns": ["ts", "service", "warning"],
+      "rows": [
+        ["2026-02-22T12:00:00Z", "gateway", "retrying upstream request"],
+        ["2026-02-22T12:00:02Z", "worker", "queue depth over threshold"],
+        ["2026-02-22T12:00:06Z", "api", "slow query observed"],
+        ["2026-02-22T12:00:07Z", "web", "cache miss spike"],
+        ["2026-02-22T12:00:09Z", "gateway", "partial fallback path used"]
       ]
     }
   }

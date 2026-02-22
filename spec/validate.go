@@ -85,11 +85,6 @@ func (s *AppSpec) Validate() error {
 		s.Tables[id] = normalized
 	}
 
-	seen := map[string]bool{}
-	if err := validateNode(s.Layout, s.Charts, s.Tables, seen); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -336,17 +331,6 @@ func validateChart(id string, c ChartSpec, datasets map[string]DatasetSpec, defa
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects categorySeries dataset; got %q", id, d.Kind)
 		}
 
-	case "pie":
-		if c.Pie == nil {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"pie\" options", id, c.Family)
-		}
-		if optionCount != 1 {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
-		}
-		if d.Kind != "categorySeries" {
-			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects categorySeries dataset; got %q", id, d.Kind)
-		}
-
 	case "heatmap":
 		if c.Heatmap == nil {
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"heatmap\" options", id, c.Family)
@@ -521,9 +505,6 @@ func namesFromTime(d DatasetSpec) map[string]bool {
 func countChartOptionBlocks(c ChartSpec) int {
 	count := 0
 	if c.Bar != nil {
-		count++
-	}
-	if c.Pie != nil {
 		count++
 	}
 	if c.Heatmap != nil {

@@ -3,7 +3,9 @@ package tui
 import "github.com/ivogarais/bronto-cli/spec"
 
 const (
-	maxPanelsPerRow = 3
+	maxPanelsPerRow   = 3
+	chartPanelsPerRow = 3
+	logPanelsPerRow   = 2
 
 	preferredChartPanelHeight = 14
 	preferredTablePanelHeight = 12

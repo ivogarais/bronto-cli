@@ -25,13 +25,18 @@ This package is intentionally split by responsibility so renderer behavior stays
 - `chart_meta.go`:
   - compact metadata summaries and legends
 - `charts.go`:
-  - chart renderers per family (`bar`, `line`, `pie`, `scatter`, `waveline`, `streamline`, `sparkline`, `heatmap`, `timeseries`, `ohlc`)
+  - chart renderers per family (`bar`, `line`, `scatter`, `waveline`, `streamline`, `sparkline`, `heatmap`, `timeseries`, `ohlc`)
 - `helpers.go`:
   - shared utility helpers used across modules
 
 ## Design Rules
 
 - The spec controls data and structure.
+- The renderer enforces a default structure for generated dashboards:
+  - charts and logs never mix in the same grid
+  - charts render in 3-per-row grids
+  - logs (tables) render in 2-per-row grids
+  - when both exist, tabs switch between Charts and Logs
 - The renderer controls look-and-feel and responsive layout.
 - Unsupported or malformed nodes degrade gracefully in-panel.
 - Rendering is deterministic for the same spec and terminal size.

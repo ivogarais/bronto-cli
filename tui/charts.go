@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"image/color"
 	"math"
-	"sort"
-	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -272,99 +270,6 @@ func lineSeriesStyle(th brontotheme.BrontoTheme, variant string, idx int) lipglo
 	return palette[idx%len(palette)]
 }
 
-func renderPieChart(th brontotheme.BrontoTheme, ds spec.DatasetSpec, width, height int) string {
-	if ds.Kind != "categorySeries" {
-		return "(unsupported dataset for pie chart)"
-	}
-
-	totalItems := len(ds.Labels)
-	if totalItems > len(ds.Values) {
-		totalItems = len(ds.Values)
-	}
-	if totalItems == 0 {
-		return "(no pie data)"
-	}
-
-	type slice struct {
-		Label string
-		Value float64
-	}
-	slices := make([]slice, 0, totalItems)
-	total := 0.0
-	for i := 0; i < totalItems; i++ {
-		v := ds.Values[i]
-		if v < 0 {
-			v = 0
-		}
-		slices = append(slices, slice{
-			Label: ds.Labels[i],
-			Value: v,
-		})
-		total += v
-	}
-	if total <= 0 {
-		return "(no positive values for pie chart)"
-	}
-
-	sort.SliceStable(slices, func(i, j int) bool {
-		return slices[i].Value > slices[j].Value
-	})
-
-	contentW := maxInt(24, width-8)
-	valueW := 9
-	pctW := 6
-	barW := maxInt(8, contentW/5)
-	labelW := contentW - valueW - pctW - barW - 4
-	if labelW < 8 {
-		labelW = 8
-		barW = maxInt(6, contentW-labelW-valueW-pctW-4)
-	}
-
-	maxRows := maxInt(2, height-8)
-	if maxRows > len(slices) {
-		maxRows = len(slices)
-	}
-
-	lines := make([]string, 0, maxRows+4)
-	lines = append(lines, th.Primary.Render("◉ total: "+formatValueWithUnit(total, ds.Unit)))
-	lines = append(lines, th.Divider.Render(strings.Repeat("─", minInt(contentW, labelW+valueW+pctW+barW+3))))
-
-	for i := 0; i < maxRows; i++ {
-		item := slices[i]
-		pct := (item.Value / total) * 100.0
-		fill := int(math.Round((pct / 100.0) * float64(barW)))
-		if fill < 1 && item.Value > 0 {
-			fill = 1
-		}
-		if fill > barW {
-			fill = barW
-		}
-
-		barGlyph := strings.Repeat("█", fill) + strings.Repeat(" ", maxInt(0, barW-fill))
-		barStyle := th.ChartBar
-		if isDangerLabel(item.Label) {
-			barStyle = th.ChartDanger
-		}
-
-		lines = append(lines, fmt.Sprintf(
-			"%-*s %*s %*s %s",
-			labelW,
-			truncateCell(item.Label, labelW, colDefault),
-			valueW,
-			formatMetricValue(item.Value),
-			pctW,
-			fmt.Sprintf("%.1f%%", pct),
-			barStyle.Render(barGlyph),
-		))
-	}
-
-	if len(slices) > maxRows {
-		lines = append(lines, th.Muted.Render(fmt.Sprintf("+%d more", len(slices)-maxRows)))
-	}
-
-	return strings.Join(lines, "\n")
-}
-
 type timeSeriesSelection struct {
 	Name    string
 	Variant string
@@ -600,6 +505,7 @@ func renderHeatmapChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec, ds
 		maxV = minV + 1
 	}
 
+	// Official ntcharts flow: New -> SetXYRange -> Push -> Draw -> View.
 	hm := heatmap.New(
 		width,
 		height,
@@ -615,7 +521,9 @@ func renderHeatmapChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec, ds
 		hm.SetXStep(0)
 		hm.SetYStep(0)
 	}
-	hm.PushAll(points)
+	for _, p := range points {
+		hm.Push(p)
+	}
 	hm.Draw()
 	return hm.View()
 }
@@ -976,14 +884,14 @@ func extractHeatmapPoints(ds spec.DatasetSpec) ([]heatmap.HeatPoint, float64, fl
 
 func brontoHeatmapScale() []color.Color {
 	return []color.Color{
-		lipgloss.Color("#0B0B0B"),
-		lipgloss.Color("#1A1A1A"),
-		lipgloss.Color("#2A1E08"),
-		lipgloss.Color("#5C4310"),
-		lipgloss.Color("#8A6517"),
-		lipgloss.Color("#B9831A"),
-		lipgloss.Color("#E6A400"),
-		lipgloss.Color("#F2C94C"),
+		lipgloss.Color("#1D3557"),
+		lipgloss.Color("#457B9D"),
+		lipgloss.Color("#2A9D8F"),
+		lipgloss.Color("#8AB17D"),
+		lipgloss.Color("#E9C46A"),
+		lipgloss.Color("#F4A261"),
+		lipgloss.Color("#E76F51"),
+		lipgloss.Color("#D62828"),
 	}
 }
 
