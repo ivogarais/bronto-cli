@@ -24,6 +24,10 @@ type Model struct {
 	Charts map[string]barchart.Model
 	Tables map[string]table.Model
 
+	FocusablePanels []focusPanel
+	PanelNumberByID map[string]int
+	FocusedPanel    int
+
 	Width    int
 	Height   int
 	ContentH int
@@ -39,16 +43,18 @@ func NewModel(s *spec.AppSpec, specPath string) Model {
 	}
 
 	m := Model{
-		Spec:     s,
-		SpecPath: specPath,
-		Theme:    brontotheme.NewBrontoTheme(density),
-		Charts:   map[string]barchart.Model{},
-		Tables:   map[string]table.Model{},
-		Status:   "Snapshot loaded",
-		LoadedAt: time.Now(),
+		Spec:            s,
+		SpecPath:        specPath,
+		Theme:           brontotheme.NewBrontoTheme(density),
+		Charts:          map[string]barchart.Model{},
+		Tables:          map[string]table.Model{},
+		PanelNumberByID: map[string]int{},
+		Status:          "Snapshot loaded",
+		LoadedAt:        time.Now(),
 	}
 
 	m.resolveComponents()
+	m.indexFocusablePanels()
 	m.resizeForLayout(120, 36)
 	return m
 }
@@ -60,26 +66,84 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if number, ok := parseFocusNumberKey(msg); ok {
+			if _, exists := m.focusPanelByNumber(number); exists {
+				m.FocusedPanel = number
+				m.ScrollY = 0
+				m.resizeForLayout(m.Width, m.Height)
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "j":
-			m.scrollBy(1)
+		case "esc", "0":
+			if m.FocusedPanel > 0 {
+				m.FocusedPanel = 0
+				m.resizeForLayout(m.Width, m.Height)
+				return m, nil
+			}
+			if msg.String() == "esc" {
+				return m, tea.Quit
+			}
+		case "tab":
+			if len(m.FocusablePanels) > 0 {
+				next := m.FocusedPanel + 1
+				if next > len(m.FocusablePanels) || next <= 0 {
+					next = 1
+				}
+				m.FocusedPanel = next
+				m.resizeForLayout(m.Width, m.Height)
+			}
 			return m, nil
-		case "k":
-			m.scrollBy(-1)
+		case "shift+tab":
+			if len(m.FocusablePanels) > 0 {
+				prev := m.FocusedPanel - 1
+				if prev <= 0 || prev > len(m.FocusablePanels) {
+					prev = len(m.FocusablePanels)
+				}
+				m.FocusedPanel = prev
+				m.resizeForLayout(m.Width, m.Height)
+			}
 			return m, nil
-		case "pgdown", "ctrl+f":
-			m.scrollBy(maxInt(1, m.Height-4))
-			return m, nil
-		case "pgup", "ctrl+b":
-			m.scrollBy(-maxInt(1, m.Height-4))
-			return m, nil
-		case "g":
-			m.ScrollY = 0
-			return m, nil
-		case "G":
-			m.ScrollY = m.maxScroll()
+		}
+
+		if m.FocusedPanel == 0 {
+			switch msg.String() {
+			case "down", "j", "ctrl+n":
+				m.scrollBy(1)
+				return m, nil
+			case "up", "k", "ctrl+p":
+				m.scrollBy(-1)
+				return m, nil
+			case "pgdown", "ctrl+f", "ctrl+d":
+				m.scrollBy(maxInt(1, m.Height-4))
+				return m, nil
+			case "pgup", "ctrl+b", "ctrl+u":
+				m.scrollBy(-maxInt(1, m.Height-4))
+				return m, nil
+			case "home", "g":
+				m.ScrollY = 0
+				return m, nil
+			case "end", "G":
+				m.ScrollY = m.maxScroll()
+				return m, nil
+			}
+		}
+
+		if tableRef, ok := m.focusedTableRef(); ok {
+			t, exists := m.Tables[tableRef]
+			if !exists {
+				return m, nil
+			}
+			var cmd tea.Cmd
+			t, cmd = t.Update(msg)
+			m.Tables[tableRef] = t
+			return m, cmd
+		}
+
+		if m.FocusedPanel > 0 {
 			return m, nil
 		}
 
@@ -117,14 +181,20 @@ func (m Model) View() tea.View {
 		height = 36
 	}
 
-	contentH := m.ContentH
-	if contentH <= 0 {
-		contentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
+	body := ""
+	if panel, ok := m.focusPanelByNumber(m.FocusedPanel); ok {
+		hint := m.Theme.Muted.Render("(focus mode: 0/esc exit | tab next | shift+tab prev | q quit)")
+		panelBody := m.renderNode(panel.Node, width, maxInt(1, height-1))
+		body = hint + "\n" + panelBody
+	} else {
+		contentH := m.ContentH
+		if contentH <= 0 {
+			contentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
+		}
+		body = m.renderNode(m.Spec.Layout, width, contentH)
+		body = clampViewport(body, m.ScrollY, height)
 	}
-
-	body := m.renderNode(m.Spec.Layout, width, contentH)
 	body = m.Theme.AppBg.Copy().Render(body)
-	body = clampViewport(body, m.ScrollY, height)
 	v := tea.NewView(body + "\n")
 	v.AltScreen = true
 	return v
@@ -203,6 +273,11 @@ func (m *Model) resizeForLayout(width, height int) {
 	m.Height = height
 	m.ContentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
 	m.resizeNode(m.Spec.Layout, width, m.ContentH)
+	if panel, ok := m.focusPanelByNumber(m.FocusedPanel); ok {
+		m.resizeNode(panel.Node, width, maxInt(1, height-1))
+	} else {
+		m.FocusedPanel = 0
+	}
 	m.ScrollY = clampInt(m.ScrollY, 0, m.maxScroll())
 }
 
@@ -357,7 +432,7 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		}
 		header := fmt.Sprintf("%s\n%s",
 			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
-			m.Theme.Muted.Render("(q quit | j/k scroll | pgup/pgdn)"),
+			m.Theme.Muted.Render("(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus)"),
 		)
 		header = trimTrailingWhitespace(header)
 
@@ -372,6 +447,9 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		}
 		if title == "" {
 			title = n.ChartRef
+		}
+		if number := m.panelNumberForNode(n); number > 0 {
+			title = fmt.Sprintf("[%d] %s", number, title)
 		}
 
 		content := "(missing chart)"
@@ -402,6 +480,9 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		title := n.Title
 		if title == "" {
 			title = n.TableRef
+		}
+		if number := m.panelNumberForNode(n); number > 0 {
+			title = fmt.Sprintf("[%d] %s", number, title)
 		}
 		content := "(missing table)"
 		if t, ok := m.Tables[n.TableRef]; ok {
@@ -479,6 +560,11 @@ type rowGroup struct {
 	Weights  []int
 }
 
+type focusPanel struct {
+	Number int
+	Node   spec.Node
+}
+
 type colType int
 
 const (
@@ -490,6 +576,74 @@ const (
 	colMessage
 	colNumeric
 )
+
+func parseFocusNumberKey(msg tea.KeyMsg) (int, bool) {
+	s := msg.String()
+	if len(s) != 1 {
+		return 0, false
+	}
+	ch := s[0]
+	if ch < '1' || ch > '9' {
+		return 0, false
+	}
+	return int(ch - '0'), true
+}
+
+func (m *Model) indexFocusablePanels() {
+	m.FocusablePanels = nil
+	m.PanelNumberByID = map[string]int{}
+	m.FocusedPanel = 0
+
+	if m.Spec == nil {
+		return
+	}
+
+	next := 1
+	var walk func(n spec.Node)
+	walk = func(n spec.Node) {
+		switch n.Type {
+		case "chart", "table":
+			m.FocusablePanels = append(m.FocusablePanels, focusPanel{
+				Number: next,
+				Node:   n,
+			})
+			if n.ID != "" {
+				m.PanelNumberByID[n.ID] = next
+			}
+			next++
+		}
+		for _, ch := range n.Children {
+			walk(ch)
+		}
+	}
+	walk(m.Spec.Layout)
+}
+
+func (m Model) focusPanelByNumber(number int) (focusPanel, bool) {
+	if number <= 0 {
+		return focusPanel{}, false
+	}
+	index := number - 1
+	if index < 0 || index >= len(m.FocusablePanels) {
+		return focusPanel{}, false
+	}
+	return m.FocusablePanels[index], true
+}
+
+func (m Model) panelNumberForNode(n spec.Node) int {
+	if n.ID == "" || m.PanelNumberByID == nil {
+		return 0
+	}
+	return m.PanelNumberByID[n.ID]
+}
+
+func (m Model) focusedTableRef() (string, bool) {
+	panel, ok := m.focusPanelByNumber(m.FocusedPanel)
+	if !ok || panel.Node.Type != "table" || panel.Node.TableRef == "" {
+		return "", false
+	}
+	return panel.Node.TableRef, true
+}
 
 func (m *Model) scrollBy(delta int) {
 	if delta == 0 {
@@ -1093,10 +1247,20 @@ func panelPadding(width, height int, density string) (vertical, horizontal int) 
 	if density == "compact" {
 		return 0, 0
 	}
-	if width < 40 || height < 8 {
-		return 0, 1
+
+	vertical = 1
+	horizontal = 1
+
+	if height < 14 {
+		vertical = 0
 	}
-	return 1, 1
+	if width < 72 {
+		horizontal = 0
+	}
+	if width < 46 || height < 10 {
+		return 0, 0
+	}
+	return vertical, horizontal
 }
 
 func panelTooSmallMessage(width, height, minW, minH int) string {

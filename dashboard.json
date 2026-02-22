@@ -1,7 +1,7 @@
 {
   "version": "bronto-tui/v1",
-  "name": "errors-dashboard",
-  "title": "Errors (Last 30m)",
+  "name": "ai-agent-error-dashboard",
+  "title": "AI Agent Error Dashboard (Last 48h)",
   "theme": {
     "brand": "bronto",
     "density": "comfortable"
@@ -17,8 +17,8 @@
   },
   "meta": {
     "generatedBy": "codex",
-    "generatedAt": "2026-02-22T16:20:00Z",
-    "requestId": "demo-v1"
+    "generatedAt": "2026-02-22T18:10:00Z",
+    "requestId": "layout-scroll-demo"
   },
   "layout": {
     "type": "col",
@@ -28,18 +28,19 @@
       {
         "type": "header",
         "id": "hdr",
-        "titleRef": "$title",
-        "subTitle": "snapshot view"
+        "titleRef": "$title"
       },
       {
         "type": "row",
         "id": "main",
         "gap": 1,
-        "weights": [
-          2,
-          3
-        ],
         "children": [
+          {
+            "type": "chart",
+            "id": "errors_by_type_panel",
+            "title": "Errors by Type",
+            "chartRef": "errorsByType"
+          },
           {
             "type": "chart",
             "id": "errors_by_service_panel",
@@ -47,37 +48,125 @@
             "chartRef": "errorsByService"
           },
           {
+            "type": "chart",
+            "id": "errors_by_agent_panel",
+            "title": "Errors by Agent",
+            "chartRef": "errorsByAgent"
+          },
+          {
+            "type": "chart",
+            "id": "errors_by_model_panel",
+            "title": "Errors by Model",
+            "chartRef": "errorsByModel"
+          },
+          {
+            "type": "chart",
+            "id": "retry_split_panel",
+            "title": "Retryable Split",
+            "chartRef": "retrySplit"
+          },
+          {
             "type": "table",
-            "id": "latest_errors_panel",
-            "title": "Latest Errors",
-            "tableRef": "latestErrors"
+            "id": "latest_failures_panel",
+            "title": "Latest Failures",
+            "tableRef": "latestFailures"
+          },
+          {
+            "type": "table",
+            "id": "top_tools_panel",
+            "title": "Top Tool Errors",
+            "tableRef": "topTools"
+          },
+          {
+            "type": "chart",
+            "id": "errors_by_env_panel",
+            "title": "Errors by Env",
+            "chartRef": "errorsByEnv"
+          },
+          {
+            "type": "chart",
+            "id": "latency_band_panel",
+            "title": "Latency Bands",
+            "chartRef": "latencyBands"
           }
         ]
       }
     ]
   },
   "charts": {
+    "errorsByType": {
+      "family": "bar",
+      "datasetRef": "errors_by_type",
+      "bar": {
+        "orientation": "horizontal"
+      }
+    },
     "errorsByService": {
       "family": "bar",
       "datasetRef": "errors_by_service",
       "bar": {
         "orientation": "horizontal"
       }
+    },
+    "errorsByAgent": {
+      "family": "bar",
+      "datasetRef": "errors_by_agent",
+      "bar": {
+        "orientation": "horizontal"
+      }
+    },
+    "errorsByModel": {
+      "family": "bar",
+      "datasetRef": "errors_by_model",
+      "bar": {
+        "orientation": "horizontal"
+      }
+    },
+    "retrySplit": {
+      "family": "bar",
+      "datasetRef": "retry_split",
+      "bar": {
+        "orientation": "horizontal"
+      }
+    },
+    "errorsByEnv": {
+      "family": "bar",
+      "datasetRef": "errors_by_env",
+      "bar": {
+        "orientation": "horizontal"
+      }
+    },
+    "latencyBands": {
+      "family": "bar",
+      "datasetRef": "latency_bands",
+      "bar": {
+        "orientation": "horizontal"
+      }
     }
   },
   "tables": {
-    "latestErrors": {
-      "datasetRef": "latest_errors",
+    "latestFailures": {
+      "datasetRef": "latest_failures",
       "columns": [
         {
-          "key": "ts",
-          "title": "ts",
+          "key": "time",
+          "title": "time",
           "width": "auto"
         },
         {
-          "key": "service",
-          "title": "service",
-          "width": 12
+          "key": "agent",
+          "title": "agent",
+          "width": 16
+        },
+        {
+          "key": "error_type",
+          "title": "err_type",
+          "width": 14
+        },
+        {
+          "key": "retryable",
+          "title": "retry",
+          "width": 8
         },
         {
           "key": "message",
@@ -86,46 +175,214 @@
         }
       ],
       "rowLimit": 200
+    },
+    "topTools": {
+      "datasetRef": "top_tools",
+      "columns": [
+        {
+          "key": "tool",
+          "title": "tool",
+          "width": "flex"
+        },
+        {
+          "key": "count",
+          "title": "count",
+          "width": 8
+        },
+        {
+          "key": "pct",
+          "title": "pct_err",
+          "width": 10
+        }
+      ],
+      "rowLimit": 200
     }
   },
   "datasets": {
-    "errors_by_service": {
+    "errors_by_type": {
       "kind": "categorySeries",
+      "unit": "count",
       "labels": [
-        "api",
-        "worker",
-        "web",
-        "db"
+        "TimeoutError",
+        "ValidationError",
+        "UpstreamError",
+        "ThrottlingException",
+        "ToolExecutionError",
+        "ModelError"
       ],
       "values": [
-        120,
-        80,
-        60,
-        20
+        31,
+        29,
+        28,
+        21,
+        12,
+        5
       ]
     },
-    "latest_errors": {
+    "errors_by_service": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "ingestion",
+        "scheduler",
+        "query",
+        "auth",
+        "router"
+      ],
+      "values": [
+        20,
+        16,
+        14,
+        12,
+        8
+      ]
+    },
+    "errors_by_agent": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "IngestionTriageAgent",
+        "SREAgent",
+        "DataQualityAgent",
+        "SupportAgent"
+      ],
+      "values": [
+        44,
+        37,
+        26,
+        19
+      ]
+    },
+    "errors_by_model": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "claude-3-haiku",
+        "titan-express",
+        "claude-3.5-sonnet",
+        "titan-lite"
+      ],
+      "values": [
+        54,
+        50,
+        47,
+        39
+      ]
+    },
+    "retry_split": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "retryable",
+        "non-retryable"
+      ],
+      "values": [
+        80,
+        46
+      ]
+    },
+    "errors_by_env": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "prod",
+        "dev",
+        "staging"
+      ],
+      "values": [
+        45,
+        15,
+        10
+      ]
+    },
+    "latency_bands": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": [
+        "lt_250ms",
+        "250_500ms",
+        "500_1000ms",
+        "gt_1s"
+      ],
+      "values": [
+        18,
+        42,
+        51,
+        27
+      ]
+    },
+    "latest_failures": {
       "kind": "table",
       "columns": [
-        "ts",
-        "service",
+        "time",
+        "agent",
+        "error_type",
+        "retryable",
         "message"
       ],
       "rows": [
         [
-          "2026-02-22T12:00:01Z",
-          "api",
-          "NullPointerException"
+          "2026-02-22T17:01:05Z",
+          "SREAgent",
+          "TimeoutError",
+          "true",
+          "bedrock inference call exceeded timeout"
         ],
         [
-          "2026-02-22T12:00:03Z",
-          "worker",
-          "timeout contacting db"
+          "2026-02-22T17:00:42Z",
+          "IngestionTriageAgent",
+          "ValidationError",
+          "false",
+          "missing required field 'event.modelId'"
         ],
         [
-          "2026-02-22T12:00:04Z",
-          "web",
-          "500 /checkout"
+          "2026-02-22T16:59:58Z",
+          "DataQualityAgent",
+          "UpstreamError",
+          "true",
+          "retry budget exhausted during compute_metrics"
+        ],
+        [
+          "2026-02-22T16:58:23Z",
+          "SupportAgent",
+          "ThrottlingException",
+          "true",
+          "bedrock model throttled request in us-east-1"
+        ]
+      ]
+    },
+    "top_tools": {
+      "kind": "table",
+      "columns": [
+        "tool",
+        "count",
+        "pct"
+      ],
+      "rows": [
+        [
+          "invocation_only",
+          "56",
+          "44.44%"
+        ],
+        [
+          "bronto.search_logs",
+          "28",
+          "22.22%"
+        ],
+        [
+          "bronto.compute_metrics",
+          "25",
+          "19.84%"
+        ],
+        [
+          "bronto.get_keys",
+          "14",
+          "11.11%"
+        ],
+        [
+          "bronto.get_datasets",
+          "3",
+          "2.38%"
         ]
       ]
     }
