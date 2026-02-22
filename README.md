@@ -36,6 +36,23 @@ export BRONTO_API_KEY=...
 export BRONTO_API_ENDPOINT=https://api.eu.bronto.io  # optional
 ```
 
+Alternative (user-level config file):
+
+`~/.bronto/config.json`
+
+```json
+{
+  "api_key": "YOUR_KEY",
+  "api_endpoint": "https://api.eu.bronto.io"
+}
+```
+
+Optional override path:
+
+```bash
+export BRONTO_CONFIG_FILE=/path/to/config.json
+```
+
 Dataset example:
 
 ```json

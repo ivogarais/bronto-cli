@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,11 +18,17 @@ import (
 )
 
 const defaultBrontoEndpoint = "https://api.eu.bronto.io"
+const defaultBrontoConfigPath = ".bronto/config.json"
 
 type brontoLiveClient struct {
 	endpoint string
 	apiKey   string
 	client   *http.Client
+}
+
+type brontoRuntimeConfig struct {
+	APIKey   string `json:"api_key"`
+	Endpoint string `json:"api_endpoint"`
 }
 
 func hydrateSpecWithLiveData(app *spec.AppSpec) (bool, error) {
@@ -40,21 +47,17 @@ func hydrateSpecWithLiveData(app *spec.AppSpec) (bool, error) {
 		return false, nil
 	}
 
-	apiKey := strings.TrimSpace(os.Getenv("BRONTO_API_KEY"))
-	if apiKey == "" {
-		return true, errors.New("BRONTO_API_KEY is required for liveQuery datasets")
+	apiKey, endpoint, source, err := resolveBrontoCredentials()
+	if err != nil {
+		return true, err
 	}
-	endpoint := strings.TrimSpace(os.Getenv("BRONTO_API_ENDPOINT"))
-	if endpoint == "" {
-		endpoint = defaultBrontoEndpoint
-	}
-	endpoint = strings.TrimRight(endpoint, "/")
 
 	c := brontoLiveClient{
 		endpoint: endpoint,
 		apiKey:   apiKey,
 		client:   &http.Client{Timeout: 15 * time.Second},
 	}
+	_ = source
 	nowMS := time.Now().UTC().UnixMilli()
 
 	for datasetID, ds := range app.Datasets {
@@ -67,6 +70,49 @@ func hydrateSpecWithLiveData(app *spec.AppSpec) (bool, error) {
 		app.Datasets[datasetID] = ds
 	}
 	return true, nil
+}
+
+func resolveBrontoCredentials() (apiKey string, endpoint string, source string, err error) {
+	apiKey = strings.TrimSpace(os.Getenv("BRONTO_API_KEY"))
+	endpoint = strings.TrimSpace(os.Getenv("BRONTO_API_ENDPOINT"))
+	if apiKey != "" {
+		if endpoint == "" {
+			endpoint = defaultBrontoEndpoint
+		}
+		return apiKey, strings.TrimRight(endpoint, "/"), "env", nil
+	}
+
+	configPath := strings.TrimSpace(os.Getenv("BRONTO_CONFIG_FILE"))
+	if configPath == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
+			configPath = filepath.Join(home, defaultBrontoConfigPath)
+		}
+	}
+	if configPath != "" {
+		b, readErr := os.ReadFile(configPath)
+		if readErr == nil {
+			var cfg brontoRuntimeConfig
+			if jsonErr := json.Unmarshal(b, &cfg); jsonErr == nil {
+				cfgKey := strings.TrimSpace(cfg.APIKey)
+				cfgEndpoint := strings.TrimSpace(cfg.Endpoint)
+				if cfgKey != "" {
+					if endpoint == "" {
+						endpoint = cfgEndpoint
+					}
+					if endpoint == "" {
+						endpoint = defaultBrontoEndpoint
+					}
+					return cfgKey, strings.TrimRight(endpoint, "/"), "config", nil
+				}
+			}
+		}
+	}
+
+	return "", "", "", errors.New(
+		"Missing Bronto credentials. Set BRONTO_API_KEY (and optional BRONTO_API_ENDPOINT), " +
+			"or create ~/.bronto/config.json with {\"api_key\":\"...\",\"api_endpoint\":\"https://api.eu.bronto.io\"}",
+	)
 }
 
 func (c brontoLiveClient) refreshDataset(
