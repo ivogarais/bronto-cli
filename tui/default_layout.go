@@ -80,19 +80,6 @@ func (m Model) tabLine() string {
 	return "[Charts]  Logs  (use c/l)"
 }
 
-func (m Model) headerSubtitle() string {
-	switch {
-	case m.hasTabs():
-		return "default layout: tabs split charts/logs"
-	case m.HasChartsTab:
-		return "default layout: charts grid (3 per row)"
-	case m.HasLogsTab:
-		return "default layout: logs grid (2 per row)"
-	default:
-		return "default layout: no panels"
-	}
-}
-
 func (m *Model) rebuildRootLayout() {
 	if m.Spec == nil {
 		return
@@ -103,7 +90,6 @@ func (m *Model) rebuildRootLayout() {
 			Type:     "header",
 			ID:       "hdr",
 			TitleRef: "$title",
-			SubTitle: m.headerSubtitle(),
 		},
 	}
 

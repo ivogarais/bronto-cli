@@ -282,25 +282,18 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 
 	case "header":
-		title := "Dashboard"
-		if m.Spec != nil && n.TitleRef == "$title" {
-			title = m.Spec.Title
+		title := "Bronto"
+		header := m.Theme.PanelAccent.Render("▌ ") + m.Theme.AppTitle.Render(title)
+		if subtitle := strings.TrimSpace(n.SubTitle); subtitle != "" {
+			header += "\n" + m.Theme.Muted.Render(subtitle)
 		}
-		hints := "(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus)"
-		if m.hasTabs() {
-			hints = "(q quit | up/down scroll | 1-9 focus panel | 0/esc exit focus | c charts | l logs)"
-		}
-		subtitle := n.SubTitle
-		if subtitle == "" {
-			subtitle = hints
-		}
-		header := fmt.Sprintf("%s\n%s",
-			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
-			m.Theme.Muted.Render(subtitle),
-		)
 		header = trimTrailingWhitespace(header)
 
-		box := m.Theme.HeaderBox.Copy().Width(width)
+		hPad := 1
+		if m.Theme.Density == "compact" {
+			hPad = 0
+		}
+		box := m.Theme.HeaderBox.Copy().Width(width).Padding(0, hPad)
 		return box.Render(header)
 
 	case "chart":
