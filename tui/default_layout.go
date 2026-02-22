@@ -90,6 +90,7 @@ func (m *Model) rebuildRootLayout() {
 			Type:     "header",
 			ID:       "hdr",
 			TitleRef: "$title",
+			SubTitle: m.statusSubtitle(),
 		},
 	}
 

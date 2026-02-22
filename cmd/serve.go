@@ -12,6 +12,7 @@ import (
 )
 
 var specPath string
+var refreshMS = 1500
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -26,7 +27,7 @@ var serveCmd = &cobra.Command{
 			return err
 		}
 
-		m := tui.NewModel(s, specPath)
+		m := tui.NewModel(s, specPath, refreshMS)
 		p := tea.NewProgram(m)
 
 		if _, err := p.Run(); err != nil {
@@ -39,4 +40,11 @@ var serveCmd = &cobra.Command{
 
 func init() {
 	serveCmd.Flags().StringVar(&specPath, "spec", "", "Path to dashboard spec JSON (required)")
+	serveCmd.Flags().IntVar(
+		&refreshMS,
+		"refresh-ms",
+		1500,
+		"Advanced: auto-reload interval in milliseconds (default: 1500)",
+	)
+	_ = serveCmd.Flags().MarkHidden("refresh-ms")
 }

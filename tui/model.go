@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ type Model struct {
 	Spec     *spec.AppSpec
 	SpecPath string
 	Theme    brontotheme.BrontoTheme
+	Refresh  time.Duration
 
 	HasChartsTab bool
 	HasLogsTab   bool
@@ -39,24 +41,41 @@ type Model struct {
 	TableFilter     map[string]string
 	TableFilterMode bool
 
-	Width    int
-	Height   int
-	ContentH int
-	ScrollY  int
-	Status   string
-	LoadedAt time.Time
+	Width     int
+	Height    int
+	ContentH  int
+	ScrollY   int
+	Status    string
+	LoadedAt  time.Time
+	LastError string
+
+	lastSpecModTime    time.Time
+	liveReloadInFlight bool
 }
 
-func NewModel(s *spec.AppSpec, specPath string) Model {
+type liveRefreshTickMsg struct{}
+
+type liveRefreshResultMsg struct {
+	spec     *spec.AppSpec
+	loadedAt time.Time
+	modTime  time.Time
+	err      error
+}
+
+func NewModel(s *spec.AppSpec, specPath string, refreshMS int) Model {
 	density := "comfortable"
 	if s != nil {
 		density = s.Theme.Density
+	}
+	if refreshMS < 0 {
+		refreshMS = 0
 	}
 
 	m := Model{
 		Spec:            s,
 		SpecPath:        specPath,
 		Theme:           brontotheme.NewBrontoTheme(density),
+		Refresh:         time.Duration(refreshMS) * time.Millisecond,
 		Charts:          map[string]barchart.Model{},
 		Lines:           map[string]linechart.Model{},
 		Tables:          map[string]table.Model{},
@@ -65,6 +84,12 @@ func NewModel(s *spec.AppSpec, specPath string) Model {
 		TableFilter:     map[string]string{},
 		Status:          "Snapshot loaded",
 		LoadedAt:        time.Now(),
+	}
+	if refreshMS > 0 {
+		m.Status = fmt.Sprintf("Live auto-refresh enabled (%dms)", refreshMS)
+	}
+	if stat, err := os.Stat(specPath); err == nil {
+		m.lastSpecModTime = stat.ModTime().UTC()
 	}
 
 	m.applyDefaultLayoutStructure()
@@ -75,11 +100,71 @@ func NewModel(s *spec.AppSpec, specPath string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.Refresh > 0 {
+		return m.scheduleLiveTick()
+	}
 	return nil
+}
+
+func (m Model) scheduleLiveTick() tea.Cmd {
+	if m.Refresh <= 0 {
+		return nil
+	}
+	return tea.Tick(m.Refresh, func(_ time.Time) tea.Msg {
+		return liveRefreshTickMsg{}
+	})
+}
+
+func reloadSpecCmd(specPath string) tea.Cmd {
+	return func() tea.Msg {
+		stat, statErr := os.Stat(specPath)
+		s, err := spec.LoadStrict(specPath)
+		msg := liveRefreshResultMsg{
+			spec:     s,
+			loadedAt: time.Now().UTC(),
+			err:      err,
+		}
+		if statErr == nil {
+			msg.modTime = stat.ModTime().UTC()
+		}
+		return msg
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case liveRefreshTickMsg:
+		if m.Refresh <= 0 {
+			return m, nil
+		}
+		if m.liveReloadInFlight {
+			return m, m.scheduleLiveTick()
+		}
+		m.liveReloadInFlight = true
+		return m, tea.Batch(m.scheduleLiveTick(), reloadSpecCmd(m.SpecPath))
+
+	case liveRefreshResultMsg:
+		m.liveReloadInFlight = false
+		if msg.err != nil {
+			m.LastError = msg.err.Error()
+			m.Status = "Live refresh failed"
+			m.rebuildRootLayout()
+			m.resizeForLayout(m.Width, m.Height)
+			return m, nil
+		}
+
+		changed := msg.modTime.IsZero() || !msg.modTime.Equal(m.lastSpecModTime)
+		if changed {
+			m.applySpecSnapshot(msg.spec)
+			m.lastSpecModTime = msg.modTime
+			m.LoadedAt = msg.loadedAt
+		}
+		m.LastError = ""
+		m.Status = "Live refresh active"
+		m.rebuildRootLayout()
+		m.resizeForLayout(m.Width, m.Height)
+		return m, nil
+
 	case tea.KeyMsg:
 		if m.TableFilterMode {
 			if tableRef, ok := m.focusedTableRef(); ok {
@@ -242,6 +327,76 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) applySpecSnapshot(next *spec.AppSpec) {
+	if next == nil {
+		return
+	}
+
+	prevActiveTab := m.ActiveTab
+	prevFocusedPanel := m.FocusedPanel
+	prevScrollY := m.ScrollY
+	prevFocusScrollY := m.FocusScrollY
+	prevTableFilters := map[string]string{}
+	for key, value := range m.TableFilter {
+		prevTableFilters[key] = value
+	}
+
+	m.Spec = next
+	density := "comfortable"
+	if next.Theme.Density != "" {
+		density = next.Theme.Density
+	}
+	m.Theme = brontotheme.NewBrontoTheme(density)
+
+	m.applyDefaultLayoutStructure()
+	if prevActiveTab == tabLogs && m.HasLogsTab {
+		m.ActiveTab = tabLogs
+		m.rebuildRootLayout()
+	} else if prevActiveTab == tabCharts && m.HasChartsTab {
+		m.ActiveTab = tabCharts
+		m.rebuildRootLayout()
+	}
+
+	m.resolveComponents()
+	for tableRef, filter := range prevTableFilters {
+		if _, exists := m.Tables[tableRef]; exists {
+			m.TableFilter[tableRef] = filter
+			if filter != "" {
+				m.applyTableFilter(tableRef)
+			}
+		}
+	}
+
+	m.indexFocusablePanels()
+	if prevFocusedPanel > 0 && prevFocusedPanel <= len(m.FocusablePanels) {
+		m.FocusedPanel = prevFocusedPanel
+	} else {
+		m.FocusedPanel = 0
+	}
+	m.ScrollY = prevScrollY
+	m.FocusScrollY = prevFocusScrollY
+}
+
+func (m Model) statusSubtitle() string {
+	parts := []string{}
+	if m.Refresh > 0 {
+		parts = append(parts, fmt.Sprintf("live %dms", m.Refresh.Milliseconds()))
+	} else {
+		parts = append(parts, "snapshot")
+	}
+
+	if !m.LoadedAt.IsZero() {
+		parts = append(parts, "updated "+m.LoadedAt.UTC().Format("15:04:05Z"))
+	}
+	if m.Status != "" {
+		parts = append(parts, m.Status)
+	}
+	if m.LastError != "" {
+		parts = append(parts, "error: "+m.LastError)
+	}
+	return strings.Join(parts, " | ")
 }
 
 func (m Model) View() tea.View {
