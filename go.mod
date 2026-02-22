@@ -3,6 +3,7 @@ module github.com/ivogarais/bronto-cli
 go 1.25.0
 
 require (
+	charm.land/bubbles/v2 v2.0.0-rc.1
 	charm.land/bubbletea/v2 v2.0.0-rc.1.0.20251116163936-f60735dff10c
 	charm.land/lipgloss/v2 v2.0.0-beta.3.0.20251114164805-d267651963ad
 	github.com/NimbleMarkets/ntcharts/v2 v2.0.0-beta.5
@@ -10,7 +11,6 @@ require (
 )
 
 require (
-	charm.land/bubbles/v2 v2.0.0-rc.1 // indirect
 	github.com/charmbracelet/colorprofile v0.3.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20251116181749-377898bcce38 // indirect
 	github.com/charmbracelet/x/ansi v0.11.1 // indirect

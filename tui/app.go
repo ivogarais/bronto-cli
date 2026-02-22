@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/NimbleMarkets/ntcharts/v2/barchart"
@@ -20,6 +21,7 @@ type Model struct {
 	RefreshEveryMs int
 	Widgets        []spec.Widget
 	Bar            barchart.Model
+	Tables         map[string]table.Model
 
 	StartedAt time.Time
 	Now       time.Time
@@ -32,6 +34,45 @@ func NewModel(s *spec.DashboardSpec, specPath string) Model {
 	now := time.Now()
 	bar := barchart.New(50, 12)
 	setFakeBarData(&bar)
+	tables := make(map[string]table.Model)
+
+	for _, w := range s.Widgets {
+		if w.Type != "table" {
+			continue
+		}
+
+		cols := make([]table.Column, 0, len(w.Columns))
+		for _, c := range w.Columns {
+			cols = append(cols, table.Column{Title: c, Width: max(10, len(c)+2)})
+		}
+
+		rawRows := [][]string{
+			{"2026-02-22T12:00:01Z", "api", "NullPointerException"},
+			{"2026-02-22T12:00:03Z", "worker", "timeout contacting db"},
+			{"2026-02-22T12:00:04Z", "web", "500 /checkout"},
+		}
+		rows := make([]table.Row, 0, len(rawRows))
+		for _, rr := range rawRows {
+			row := make(table.Row, len(w.Columns))
+			for i := range w.Columns {
+				if i < len(rr) {
+					row[i] = rr[i]
+				} else {
+					row[i] = "-"
+				}
+			}
+			rows = append(rows, row)
+		}
+
+		t := table.New(
+			table.WithColumns(cols),
+			table.WithRows(rows),
+			table.WithFocused(true),
+			table.WithWidth(50),
+			table.WithHeight(8),
+		)
+		tables[w.ID] = t
+	}
 
 	return Model{
 		Title:          s.Title,
@@ -39,9 +80,10 @@ func NewModel(s *spec.DashboardSpec, specPath string) Model {
 		RefreshEveryMs: s.Refresh.EveryMs,
 		Widgets:        s.Widgets,
 		Bar:            bar,
+		Tables:         tables,
 		StartedAt:      now,
 		Now:            now,
-		Status:         "Running (ntcharts barchart; fake data)",
+		Status:         "Running (ntcharts + bubbles/table; fake data)",
 	}
 }
 
@@ -79,6 +121,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}
+		for id, t := range m.Tables {
+			var cmd tea.Cmd
+			t, cmd = t.Update(msg)
+			m.Tables[id] = t
+			if cmd != nil {
+				return m, cmd
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -90,6 +140,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		chartH := 12
 		m.Bar.Resize(chartW, chartH)
 		m.Bar.Draw()
+
+		for id, t := range m.Tables {
+			cols := t.Columns()
+			if len(cols) == 0 {
+				continue
+			}
+
+			available := msg.Width - 10
+			if available < 40 {
+				available = 40
+			}
+			per := available / len(cols)
+			if per < 10 {
+				per = 10
+			}
+
+			for i := range cols {
+				cols[i].Width = per
+			}
+			t.SetColumns(cols)
+			t.SetWidth(available)
+			t.SetHeight(10)
+			m.Tables[id] = t
+		}
 	case tickMsg:
 		m.Now = time.Time(msg)
 		setFakeBarData(&m.Bar)
@@ -132,7 +206,11 @@ func (m Model) View() tea.View {
 		case "barchart":
 			panels = append(panels, panelStyle.Render(w.Title+"\n\n"+m.Bar.View()))
 		case "table":
-			panels = append(panels, panelStyle.Render(renderTablePlaceholder(w)))
+			if t, ok := m.Tables[w.ID]; ok {
+				panels = append(panels, panelStyle.Render(w.Title+"\n\n"+t.View()))
+			} else {
+				panels = append(panels, panelStyle.Render(w.Title+"\n\n(no table state found)"))
+			}
 		default:
 			panels = append(panels, panelStyle.Render(fmt.Sprintf("%s\n(unknown widget type)", w.Title)))
 		}
@@ -143,19 +221,9 @@ func (m Model) View() tea.View {
 	return v
 }
 
-func renderTablePlaceholder(w spec.Widget) string {
-	lines := []string{
-		fmt.Sprintf("%s (table)", w.Title),
-		"",
-		strings.Join(w.Columns, " | "),
-		strings.Repeat("-", 3*len(strings.Join(w.Columns, " | "))),
+func max(a, b int) int {
+	if a > b {
+		return a
 	}
-
-	// Fake rows
-	lines = append(lines,
-		"2026-02-22T12:00:01Z | api | NullPointerException",
-		"2026-02-22T12:00:03Z | worker | timeout contacting db",
-		"2026-02-22T12:00:04Z | web | 500 /checkout",
-	)
-	return strings.Join(lines, "\n")
+	return b
 }
