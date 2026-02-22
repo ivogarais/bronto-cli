@@ -1,24 +1,120 @@
 {
-  "version": "1",
+  "version": "bronto-tui/v1",
   "title": "Errors (Last 30m)",
-  "refresh": { "everyMs": 1000 },
-  "queries": {
-    "q_errors_by_service": { "kind": "bar" },
-    "q_latest_errors": { "kind": "table" }
+  "theme": {
+    "brand": "bronto",
+    "density": "comfortable"
   },
-  "widgets": [
-    {
-      "id": "err_by_service",
-      "type": "barchart",
-      "title": "Errors by Service",
-      "queryRef": "q_errors_by_service"
-    },
-    {
-      "id": "err_rows",
-      "type": "table",
-      "title": "Latest Error Rows",
-      "columns": ["ts", "service", "message"],
-      "queryRef": "q_latest_errors"
+  "layout": {
+    "type": "col",
+    "id": "root",
+    "gap": 1,
+    "children": [
+      {
+        "type": "header",
+        "id": "hdr",
+        "titleRef": "$title",
+        "subTitle": "snapshot view"
+      },
+      {
+        "type": "row",
+        "id": "main",
+        "gap": 1,
+        "weights": [
+          2,
+          3
+        ],
+        "children": [
+          {
+            "type": "chart",
+            "id": "errors_by_service_panel",
+            "title": "Errors by Service",
+            "chartRef": "errorsByService"
+          },
+          {
+            "type": "table",
+            "id": "latest_errors_panel",
+            "title": "Latest Errors",
+            "tableRef": "latestErrors"
+          }
+        ]
+      }
+    ]
+  },
+  "charts": {
+    "errorsByService": {
+      "family": "bar",
+      "orientation": "horizontal",
+      "datasetRef": "errors_by_service",
+      "render": {
+        "mode": "ascii",
+        "showAxis": true
+      }
     }
-  ]
+  },
+  "tables": {
+    "latestErrors": {
+      "datasetRef": "latest_errors",
+      "columns": [
+        {
+          "key": "ts",
+          "title": "ts",
+          "width": "auto"
+        },
+        {
+          "key": "service",
+          "title": "service",
+          "width": 12
+        },
+        {
+          "key": "message",
+          "title": "message",
+          "width": "flex"
+        }
+      ],
+      "rowLimit": 200
+    }
+  },
+  "datasets": {
+    "errors_by_service": {
+      "kind": "categorySeries",
+      "labels": [
+        "api",
+        "worker",
+        "web",
+        "db"
+      ],
+      "values": [
+        120,
+        80,
+        60,
+        20
+      ]
+    },
+    "latest_errors": {
+      "kind": "table",
+      "columns": [
+        "ts",
+        "service",
+        "message"
+      ],
+      "rows": [
+        [
+          "2026-02-22T12:00:01Z",
+          "api",
+          "NullPointerException"
+        ],
+        [
+          "2026-02-22T12:00:03Z",
+          "worker",
+          "timeout contacting db"
+        ],
+        [
+          "2026-02-22T12:00:04Z",
+          "web",
+          "500 /checkout"
+        ]
+      ]
+    }
+  }
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/ivogarais/bronto-cli/datasource"
 	"github.com/ivogarais/bronto-cli/spec"
 	"github.com/ivogarais/bronto-cli/tui"
 	"github.com/spf13/cobra"
@@ -22,13 +21,12 @@ var serveCmd = &cobra.Command{
 			return errors.New("missing required flag: --spec <path>")
 		}
 
-		s, err := spec.Load(specPath)
+		s, err := spec.LoadStrict(specPath)
 		if err != nil {
 			return err
 		}
 
-		ds := datasource.NewFake()
-		m := tui.NewModel(s, specPath, ds)
+		m := tui.NewModel(s, specPath)
 		p := tea.NewProgram(m)
 
 		if _, err := p.Run(); err != nil {
