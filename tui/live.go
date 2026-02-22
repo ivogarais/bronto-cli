@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ivogarais/bronto-cli/spec"
@@ -24,6 +26,19 @@ type brontoLiveClient struct {
 	endpoint string
 	apiKey   string
 	client   *http.Client
+}
+
+type liveQueryCache struct {
+	metrics map[string]map[string]metricSeries
+	logs    map[string][]map[string]any
+}
+
+var globalRateLimitState = struct {
+	mu             sync.Mutex
+	backoffUntil   time.Time
+	consecutive429 int
+}{
+	backoffUntil: time.Time{},
 }
 
 type brontoRuntimeConfig struct {
@@ -59,12 +74,16 @@ func hydrateSpecWithLiveData(app *spec.AppSpec) (bool, error) {
 	}
 	_ = source
 	nowMS := time.Now().UTC().UnixMilli()
+	cache := &liveQueryCache{
+		metrics: map[string]map[string]metricSeries{},
+		logs:    map[string][]map[string]any{},
+	}
 
 	for datasetID, ds := range app.Datasets {
 		if ds.Live == nil {
 			continue
 		}
-		if err := c.refreshDataset(context.Background(), datasetID, &ds, nowMS); err != nil {
+		if err := c.refreshDataset(context.Background(), datasetID, &ds, nowMS, cache); err != nil {
 			return true, err
 		}
 		app.Datasets[datasetID] = ds
@@ -120,6 +139,7 @@ func (c brontoLiveClient) refreshDataset(
 	datasetID string,
 	ds *spec.DatasetSpec,
 	nowMS int64,
+	cache *liveQueryCache,
 ) error {
 	live := ds.Live
 	if live == nil {
@@ -127,19 +147,41 @@ func (c brontoLiveClient) refreshDataset(
 	}
 	startMS := nowMS - int64(live.LookbackSec*1000)
 	if live.Mode == "logs" {
-		events, err := c.searchLogs(ctx, *live, startMS, nowMS)
+		cacheKey := buildLiveQueryKey(ds.Kind, *live, startMS, nowMS)
+		events, ok := cache.logs[cacheKey]
+		var err error
+		if !ok {
+			events, err = c.searchLogs(ctx, *live, startMS, nowMS)
+			if err != nil {
+				return fmt.Errorf("dataset %q liveQuery logs failed: %w", datasetID, err)
+			}
+			cache.logs[cacheKey] = events
+		}
 		if err != nil {
 			return fmt.Errorf("dataset %q liveQuery logs failed: %w", datasetID, err)
 		}
-		applyLogs(ds, events)
+		if len(events) == 0 {
+			return nil
+		}
+		eventsCopy := make([]map[string]any, 0, len(events))
+		for _, ev := range events {
+			eventsCopy = append(eventsCopy, ev)
+		}
+		applyLogs(ds, eventsCopy)
 		return nil
 	}
 
-	resp, err := c.computeMetrics(ctx, *live, startMS, nowMS)
-	if err != nil {
-		return fmt.Errorf("dataset %q liveQuery metrics failed: %w", datasetID, err)
+	cacheKey := buildLiveQueryKey(ds.Kind, *live, startMS, nowMS)
+	grouped, ok := cache.metrics[cacheKey]
+	if !ok {
+		resp, err := c.computeMetrics(ctx, *live, startMS, nowMS)
+		if err != nil {
+			return fmt.Errorf("dataset %q liveQuery metrics failed: %w", datasetID, err)
+		}
+		grouped = resp
+		cache.metrics[cacheKey] = grouped
 	}
-	applyMetrics(ds, resp)
+	applyMetrics(ds, grouped)
 	return nil
 }
 
@@ -170,7 +212,7 @@ func (c brontoLiveClient) computeMetrics(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-BRONTO-API-KEY", c.apiKey)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +255,7 @@ func (c brontoLiveClient) searchLogs(
 	}
 	req.Header.Set("X-BRONTO-API-KEY", c.apiKey)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +280,122 @@ func (c brontoLiveClient) searchLogs(
 		events = append(events, flat)
 	}
 	return events, nil
+}
+
+func buildLiveQueryKey(kind string, live spec.LiveQuerySpec, startMS int64, endMS int64) string {
+	return strings.Join(
+		[]string{
+			kind,
+			live.Mode,
+			strings.Join(live.LogIDs, ","),
+			strings.Join(live.MetricFunctions, ","),
+			live.SearchFilter,
+			strings.Join(live.GroupByKeys, ","),
+			strconv.Itoa(live.LookbackSec),
+			strconv.Itoa(live.Limit),
+			strconv.FormatInt(startMS, 10),
+			strconv.FormatInt(endMS, 10),
+		},
+		"|",
+	)
+}
+
+func (c brontoLiveClient) doRequestWithBackoff(req *http.Request) (*http.Response, error) {
+	const max429Retries = 5
+	for attempt := 0; attempt <= max429Retries; attempt++ {
+		waitForGlobalRateWindow()
+		if req.GetBody != nil {
+			body, err := req.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			req.Body = body
+		}
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests {
+			recordRateLimitSuccess()
+			return resp, nil
+		}
+		retryAfter := resp.Header.Get("Retry-After")
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		delay := computeBackoffDelay(attempt, retryAfter)
+		recordGlobalBackoff(delay)
+		if attempt == max429Retries {
+			return nil, fmt.Errorf("status=429 body=%s", strings.TrimSpace(string(body)))
+		}
+		time.Sleep(delay)
+	}
+	return nil, errors.New("unreachable retry state")
+}
+
+func waitForGlobalRateWindow() {
+	globalRateLimitState.mu.Lock()
+	until := globalRateLimitState.backoffUntil
+	globalRateLimitState.mu.Unlock()
+	if until.IsZero() {
+		return
+	}
+	sleepFor := time.Until(until)
+	if sleepFor > 0 {
+		time.Sleep(sleepFor)
+	}
+}
+
+func recordGlobalBackoff(delay time.Duration) {
+	globalRateLimitState.mu.Lock()
+	defer globalRateLimitState.mu.Unlock()
+	globalRateLimitState.consecutive429++
+	until := time.Now().Add(delay)
+	if until.After(globalRateLimitState.backoffUntil) {
+		globalRateLimitState.backoffUntil = until
+	}
+}
+
+func recordRateLimitSuccess() {
+	globalRateLimitState.mu.Lock()
+	defer globalRateLimitState.mu.Unlock()
+	globalRateLimitState.consecutive429 = 0
+	if time.Now().After(globalRateLimitState.backoffUntil) {
+		globalRateLimitState.backoffUntil = time.Time{}
+	}
+}
+
+func computeBackoffDelay(attempt int, retryAfter string) time.Duration {
+	if d, ok := parseRetryAfter(retryAfter); ok {
+		if d < 500*time.Millisecond {
+			d = 500 * time.Millisecond
+		}
+		return d
+	}
+	base := 800 * time.Millisecond
+	exp := time.Duration(1<<minInt(attempt, 6)) * base
+	if exp > 60*time.Second {
+		exp = 60 * time.Second
+	}
+	jitter := time.Duration(rand.Int63n(int64(exp / 3)))
+	return exp + jitter
+}
+
+func parseRetryAfter(raw string) (time.Duration, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(trimmed); err == nil {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(trimmed); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
 }
 
 type metricPoint struct {
