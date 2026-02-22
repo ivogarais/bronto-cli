@@ -323,10 +323,25 @@ func validateChart(id string, c ChartSpec, datasets map[string]DatasetSpec, defa
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
 		}
 		if c.Bar.Orientation == "" {
-			c.Bar.Orientation = "horizontal"
+			c.Bar.Orientation = "vertical"
 		}
 		if c.Bar.Orientation != "horizontal" && c.Bar.Orientation != "vertical" {
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q bar.orientation must be horizontal|vertical", id)
+		}
+		// Renderer policy: bar charts are always vertical.
+		if c.Bar.Orientation == "horizontal" {
+			c.Bar.Orientation = "vertical"
+		}
+		if d.Kind != "categorySeries" {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects categorySeries dataset; got %q", id, d.Kind)
+		}
+
+	case "pie":
+		if c.Pie == nil {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q family %q requires \"pie\" options", id, c.Family)
+		}
+		if optionCount != 1 {
+			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q must define only the %q options block", id, c.Family)
 		}
 		if d.Kind != "categorySeries" {
 			return ChartSpec{}, fmt.Errorf("spec invalid: chart %q expects categorySeries dataset; got %q", id, d.Kind)
@@ -506,6 +521,9 @@ func namesFromTime(d DatasetSpec) map[string]bool {
 func countChartOptionBlocks(c ChartSpec) int {
 	count := 0
 	if c.Bar != nil {
+		count++
+	}
+	if c.Pie != nil {
 		count++
 	}
 	if c.Heatmap != nil {

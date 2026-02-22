@@ -65,7 +65,7 @@ type Node struct {
 // ---------- Charts ----------
 
 type ChartSpec struct {
-	Family string `json:"family"` // bar|heatmap|line|ohlc|scatter|streamline|timeseries|waveline|sparkline
+	Family string `json:"family"` // bar|pie|heatmap|line|ohlc|scatter|streamline|timeseries|waveline|sparkline
 
 	Title      string `json:"title,omitempty"`      // optional override for leaf title
 	DatasetRef string `json:"datasetRef,omitempty"` // almost all charts use datasets
@@ -73,6 +73,7 @@ type ChartSpec struct {
 	Render ChartRender `json:"render,omitempty"`
 
 	Bar        *BarChartOptions   `json:"bar,omitempty"`
+	Pie        *PieChartOptions   `json:"pie,omitempty"`
 	Heatmap    *HeatmapOptions    `json:"heatmap,omitempty"`
 	Line       *LineChartOptions  `json:"line,omitempty"`
 	OHLC       *OHLCOptions       `json:"ohlc,omitempty"`
@@ -90,8 +91,12 @@ type ChartRender struct {
 }
 
 type BarChartOptions struct {
-	Orientation string `json:"orientation,omitempty"` // horizontal|vertical
+	Orientation string `json:"orientation,omitempty"` // horizontal|vertical (inputs are normalized to vertical by renderer policy)
 	Stacked     bool   `json:"stacked,omitempty"`     // future-friendly
+}
+
+type PieChartOptions struct {
+	Donut bool `json:"donut,omitempty"` // renderer may choose donut-like summary style
 }
 
 type HeatmapOptions struct {

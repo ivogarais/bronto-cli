@@ -1,0 +1,225 @@
+{
+  "version": "bronto-tui/v1",
+  "name": "all-chart-families",
+  "title": "Bronto All Chart Families",
+  "theme": { "brand": "bronto", "density": "comfortable" },
+  "defaults": {
+    "chartRender": { "mode": "ascii", "showAxis": true },
+    "table": { "rowLimit": 100 }
+  },
+  "meta": {
+    "generatedBy": "manual",
+    "generatedAt": "2026-02-22T19:45:00Z",
+    "requestId": "all-chart-families-sample"
+  },
+  "layout": {
+    "type": "col",
+    "id": "root",
+    "gap": 1,
+    "children": [
+      { "type": "header", "id": "hdr", "titleRef": "$title", "subTitle": "schema validation + renderer smoke test" },
+      {
+        "type": "row",
+        "id": "all_panels",
+        "gap": 1,
+        "children": [
+          { "type": "chart", "id": "p1", "title": "Bar", "chartRef": "barErrors" },
+          { "type": "chart", "id": "p2", "title": "Pie", "chartRef": "pieErrors" },
+          { "type": "chart", "id": "p3", "title": "Line", "chartRef": "lineLatency" },
+          { "type": "chart", "id": "p4", "title": "Scatter", "chartRef": "scatterLatency" },
+          { "type": "chart", "id": "p5", "title": "Waveline", "chartRef": "wavelineLatency" },
+          { "type": "chart", "id": "p6", "title": "Heatmap", "chartRef": "heatmapLoad" },
+          { "type": "chart", "id": "p7", "title": "OHLC", "chartRef": "ohlcPrice" },
+          { "type": "chart", "id": "p8", "title": "Sparkline", "chartRef": "sparkCpu" },
+          { "type": "chart", "id": "p9", "title": "Streamline", "chartRef": "streamQueue" },
+          { "type": "chart", "id": "p10", "title": "Timeseries", "chartRef": "timeReq" },
+          { "type": "table", "id": "p11", "title": "Latest Errors", "tableRef": "latestErrors" }
+        ]
+      }
+    ]
+  },
+  "charts": {
+    "barErrors": {
+      "family": "bar",
+      "datasetRef": "errors_by_type",
+      "bar": { "orientation": "vertical" }
+    },
+    "pieErrors": {
+      "family": "pie",
+      "datasetRef": "errors_by_type",
+      "pie": { "donut": true }
+    },
+    "lineLatency": {
+      "family": "line",
+      "datasetRef": "latency_xy",
+      "line": {
+        "series": [
+          { "name": "p50", "variant": "primary" },
+          { "name": "p95", "variant": "danger" }
+        ],
+        "style": { "interpolation": "linear", "markers": false }
+      }
+    },
+    "scatterLatency": {
+      "family": "scatter",
+      "datasetRef": "latency_xy",
+      "scatter": { "pointRune": "•" }
+    },
+    "wavelineLatency": {
+      "family": "waveline",
+      "datasetRef": "latency_xy",
+      "waveline": {
+        "series": [
+          { "name": "p50", "variant": "primary" },
+          { "name": "p95", "variant": "danger" }
+        ]
+      }
+    },
+    "heatmapLoad": {
+      "family": "heatmap",
+      "datasetRef": "load_heatmap",
+      "heatmap": { "min": 0, "max": 100 }
+    },
+    "ohlcPrice": {
+      "family": "ohlc",
+      "datasetRef": "price_ohlc",
+      "ohlc": { "style": "candle" }
+    },
+    "sparkCpu": {
+      "family": "sparkline",
+      "datasetRef": "cpu_values",
+      "sparkline": { "window": 30 }
+    },
+    "streamQueue": {
+      "family": "streamline",
+      "datasetRef": "queue_values",
+      "streamline": { "window": 30 }
+    },
+    "timeReq": {
+      "family": "timeseries",
+      "datasetRef": "request_time",
+      "timeseries": {
+        "series": [
+          { "name": "req_rate", "variant": "primary" },
+          { "name": "err_rate", "variant": "danger" }
+        ],
+        "timeFormat": "15:04"
+      }
+    }
+  },
+  "tables": {
+    "latestErrors": {
+      "datasetRef": "latest_errors",
+      "columns": [
+        { "key": "ts", "title": "ts", "width": "auto" },
+        { "key": "service", "title": "service", "width": 14 },
+        { "key": "message", "title": "message", "width": "flex" }
+      ],
+      "rowLimit": 100
+    }
+  },
+  "datasets": {
+    "errors_by_type": {
+      "kind": "categorySeries",
+      "unit": "count",
+      "labels": ["TimeoutError", "ValidationError", "UpstreamError", "ToolExecutionError", "ModelError"],
+      "values": [31, 29, 28, 12, 5]
+    },
+    "latency_xy": {
+      "kind": "xySeries",
+      "unit": "ms",
+      "xy": [
+        {
+          "name": "p50",
+          "points": [
+            { "x": 1, "y": 120 },
+            { "x": 2, "y": 132 },
+            { "x": 3, "y": 118 },
+            { "x": 4, "y": 140 },
+            { "x": 5, "y": 127 },
+            { "x": 6, "y": 136 }
+          ]
+        },
+        {
+          "name": "p95",
+          "points": [
+            { "x": 1, "y": 210 },
+            { "x": 2, "y": 238 },
+            { "x": 3, "y": 225 },
+            { "x": 4, "y": 260 },
+            { "x": 5, "y": 242 },
+            { "x": 6, "y": 251 }
+          ]
+        }
+      ]
+    },
+    "load_heatmap": {
+      "kind": "heatmapCells",
+      "unit": "%",
+      "heatmap": {
+        "width": 6,
+        "height": 4,
+        "values": [
+          12, 19, 26, 32, 41, 52,
+          9, 17, 24, 35, 49, 58,
+          7, 13, 21, 31, 46, 61,
+          5, 11, 18, 29, 39, 55
+        ]
+      }
+    },
+    "price_ohlc": {
+      "kind": "ohlcSeries",
+      "candles": [
+        { "t": "2026-02-22T12:00:00Z", "open": 100, "high": 112, "low": 96, "close": 109 },
+        { "t": "2026-02-22T12:05:00Z", "open": 109, "high": 118, "low": 104, "close": 114 },
+        { "t": "2026-02-22T12:10:00Z", "open": 114, "high": 121, "low": 108, "close": 110 },
+        { "t": "2026-02-22T12:15:00Z", "open": 110, "high": 124, "low": 109, "close": 122 }
+      ]
+    },
+    "cpu_values": {
+      "kind": "valueSeries",
+      "unit": "%",
+      "value": [26, 24, 28, 31, 29, 35, 38, 36, 33, 32, 34, 39, 41, 43, 40, 37, 35, 36, 39, 44]
+    },
+    "queue_values": {
+      "kind": "valueSeries",
+      "unit": "count",
+      "value": [8, 10, 7, 12, 9, 15, 13, 11, 16, 14, 18, 17, 20, 19, 16, 15, 14, 13, 12, 11]
+    },
+    "request_time": {
+      "kind": "timeSeries",
+      "unit": "rps",
+      "time": [
+        {
+          "name": "req_rate",
+          "points": [
+            { "t": "2026-02-22T12:00:00Z", "v": 140 },
+            { "t": "2026-02-22T12:05:00Z", "v": 155 },
+            { "t": "2026-02-22T12:10:00Z", "v": 149 },
+            { "t": "2026-02-22T12:15:00Z", "v": 163 }
+          ]
+        },
+        {
+          "name": "err_rate",
+          "points": [
+            { "t": "2026-02-22T12:00:00Z", "v": 7 },
+            { "t": "2026-02-22T12:05:00Z", "v": 9 },
+            { "t": "2026-02-22T12:10:00Z", "v": 8 },
+            { "t": "2026-02-22T12:15:00Z", "v": 11 }
+          ]
+        }
+      ]
+    },
+    "latest_errors": {
+      "kind": "table",
+      "columns": ["ts", "service", "message"],
+      "rows": [
+        ["2026-02-22T12:00:01Z", "api", "NullPointerException"],
+        ["2026-02-22T12:00:03Z", "worker", "timeout contacting db"],
+        ["2026-02-22T12:00:04Z", "web", "500 /checkout"],
+        ["2026-02-22T12:00:05Z", "api", "bad request payload"],
+        ["2026-02-22T12:00:08Z", "worker", "upstream rate limited"]
+      ]
+    }
+  }
+}
