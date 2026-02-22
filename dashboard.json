@@ -5,6 +5,20 @@
     "brand": "bronto",
     "density": "comfortable"
   },
+  "defaults": {
+    "chartRender": {
+      "mode": "ascii",
+      "showAxis": true
+    },
+    "table": {
+      "rowLimit": 200
+    }
+  },
+  "meta": {
+    "generatedBy": "codex",
+    "generatedAt": "2026-02-22T16:20:00Z",
+    "requestId": "demo-v1"
+  },
   "layout": {
     "type": "col",
     "id": "root",

@@ -6,6 +6,8 @@ type AppSpec struct {
 	Version  string                 `json:"version"`
 	Title    string                 `json:"title"`
 	Theme    ThemeSpec              `json:"theme"`
+	Defaults DefaultsSpec           `json:"defaults,omitempty"`
+	Meta     MetaSpec               `json:"meta,omitempty"`
 	Layout   Node                   `json:"layout"`
 	Charts   map[string]ChartSpec   `json:"charts"`
 	Tables   map[string]TableSpec   `json:"tables"`
@@ -15,6 +17,21 @@ type AppSpec struct {
 type ThemeSpec struct {
 	Brand   string `json:"brand"`   // "bronto"
 	Density string `json:"density"` // "compact"|"comfortable"
+}
+
+type DefaultsSpec struct {
+	ChartRender ChartRender   `json:"chartRender,omitempty"`
+	Table       TableDefaults `json:"table,omitempty"`
+}
+
+type TableDefaults struct {
+	RowLimit int `json:"rowLimit,omitempty"`
+}
+
+type MetaSpec struct {
+	GeneratedBy string `json:"generatedBy,omitempty"` // "codex", "claude", etc.
+	GeneratedAt string `json:"generatedAt,omitempty"` // RFC3339
+	RequestID   string `json:"requestId,omitempty"`
 }
 
 // ---------- Layout Node (tagged union) ----------
@@ -79,8 +96,6 @@ type BarChartOptions struct {
 type HeatmapOptions struct {
 	Min *float64 `json:"min,omitempty"`
 	Max *float64 `json:"max,omitempty"`
-
-	ShowAxis *bool `json:"showAxis,omitempty"`
 }
 
 type LineChartOptions struct {
@@ -141,6 +156,9 @@ type TableColumnSpec struct {
 
 type DatasetSpec struct {
 	Kind string `json:"kind"` // categorySeries|table|xySeries|timeSeries|ohlcSeries|heatmapCells|valueSeries
+
+	Unit   string `json:"unit,omitempty"`   // e.g. "ms", "%", "count"
+	Format string `json:"format,omitempty"` // number|bytes|duration
 
 	// categorySeries (bar)
 	Labels []string  `json:"labels,omitempty"`
