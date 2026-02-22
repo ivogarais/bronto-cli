@@ -3,7 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 
+	"github.com/ivogarais/bronto-cli/tui"
+
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -11,13 +15,19 @@ var specPath string
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start the Bronto TUI (coming next)",
+	Short: "Start the Bronto TUI",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if specPath == "" {
 			return errors.New("missing required flag: --spec <path>")
 		}
-		fmt.Printf("serve: received --spec %q\n", specPath)
-		fmt.Println("TUI renderer will be implemented in the next step.")
+
+		m := tui.NewModel("Bronto Dashboard", specPath)
+		p := tea.NewProgram(m, tea.WithAltScreen())
+
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to start TUI:", err)
+			return err
+		}
 		return nil
 	},
 }
