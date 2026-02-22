@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/NimbleMarkets/ntcharts/v2/barchart"
 
 	"github.com/ivogarais/bronto-cli/spec"
 )
@@ -18,6 +19,7 @@ type Model struct {
 	SpecPath       string
 	RefreshEveryMs int
 	Widgets        []spec.Widget
+	Bar            barchart.Model
 
 	StartedAt time.Time
 	Now       time.Time
@@ -28,19 +30,42 @@ type Model struct {
 
 func NewModel(s *spec.DashboardSpec, specPath string) Model {
 	now := time.Now()
+	bar := barchart.New(50, 12)
+	setFakeBarData(&bar)
+
 	return Model{
 		Title:          s.Title,
 		SpecPath:       specPath,
 		RefreshEveryMs: s.Refresh.EveryMs,
 		Widgets:        s.Widgets,
+		Bar:            bar,
 		StartedAt:      now,
 		Now:            now,
-		Status:         "Running (widgets rendered; still fake data)",
+		Status:         "Running (ntcharts barchart; fake data)",
 	}
 }
 
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func setFakeBarData(m *barchart.Model) {
+	labels := []string{"api", "worker", "web", "db"}
+	values := []float64{120, 80, 60, 20}
+
+	data := make([]barchart.BarData, 0, len(labels))
+	for i, label := range labels {
+		data = append(data, barchart.BarData{
+			Label: label,
+			Values: []barchart.BarValue{
+				{Name: label, Value: values[i]},
+			},
+		})
+	}
+
+	m.Clear()
+	m.PushAll(data)
+	m.Draw()
 }
 
 func (m Model) Init() tea.Cmd {
@@ -54,14 +79,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}
+	case tea.WindowSizeMsg:
+		m.Width = msg.Width
+		m.Height = msg.Height
+
+		chartW := msg.Width - 6
+		if chartW < 20 {
+			chartW = 20
+		}
+		chartH := 12
+		m.Bar.Resize(chartW, chartH)
+		m.Bar.Draw()
 	case tickMsg:
 		m.Now = time.Time(msg)
+		setFakeBarData(&m.Bar)
 		return m, tick()
 	}
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	titleStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
 
 	headerBox := lipgloss.NewStyle().
@@ -93,7 +130,7 @@ func (m Model) View() string {
 	for _, w := range m.Widgets {
 		switch w.Type {
 		case "barchart":
-			panels = append(panels, panelStyle.Render(renderBarChartPlaceholder(w)))
+			panels = append(panels, panelStyle.Render(w.Title+"\n\n"+m.Bar.View()))
 		case "table":
 			panels = append(panels, panelStyle.Render(renderTablePlaceholder(w)))
 		default:
@@ -101,20 +138,9 @@ func (m Model) View() string {
 		}
 	}
 
-	return header + "\n\n" + strings.Join(panels, "\n\n") + "\n"
-}
-
-func renderBarChartPlaceholder(w spec.Widget) string {
-	// Fake bars just to prove layout. Next step we'll feed real data.
-	lines := []string{
-		fmt.Sprintf("%s (bar chart)", w.Title),
-		"",
-		"api      ████████████  120",
-		"worker   ████████       80",
-		"web      ██████         60",
-		"db       ██             20",
-	}
-	return strings.Join(lines, "\n")
+	v := tea.NewView(header + "\n\n" + strings.Join(panels, "\n\n") + "\n")
+	v.AltScreen = true
+	return v
 }
 
 func renderTablePlaceholder(w spec.Widget) string {

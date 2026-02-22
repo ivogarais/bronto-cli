@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/ivogarais/bronto-cli/spec"
 	"github.com/ivogarais/bronto-cli/tui"
-
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +27,7 @@ var serveCmd = &cobra.Command{
 		}
 
 		m := tui.NewModel(s, specPath)
-		p := tea.NewProgram(m, tea.WithAltScreen())
+		p := tea.NewProgram(m)
 
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "failed to start TUI:", err)
