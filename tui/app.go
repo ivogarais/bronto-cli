@@ -27,6 +27,11 @@ type Model struct {
 	FocusablePanels []focusPanel
 	PanelNumberByID map[string]int
 	FocusedPanel    int
+	FocusScrollY    int
+
+	TableBaseRows   map[string][]table.Row
+	TableFilter     map[string]string
+	TableFilterMode bool
 
 	Width    int
 	Height   int
@@ -49,6 +54,8 @@ func NewModel(s *spec.AppSpec, specPath string) Model {
 		Charts:          map[string]barchart.Model{},
 		Tables:          map[string]table.Model{},
 		PanelNumberByID: map[string]int{},
+		TableBaseRows:   map[string][]table.Row{},
+		TableFilter:     map[string]string{},
 		Status:          "Snapshot loaded",
 		LoadedAt:        time.Now(),
 	}
@@ -66,10 +73,22 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.TableFilterMode {
+			if tableRef, ok := m.focusedTableRef(); ok {
+				if m.handleTableFilterInput(tableRef, msg) {
+					return m, nil
+				}
+			} else {
+				m.TableFilterMode = false
+			}
+		}
+
 		if number, ok := parseFocusNumberKey(msg); ok {
 			if _, exists := m.focusPanelByNumber(number); exists {
 				m.FocusedPanel = number
 				m.ScrollY = 0
+				m.FocusScrollY = 0
+				m.TableFilterMode = false
 				m.resizeForLayout(m.Width, m.Height)
 			}
 			return m, nil
@@ -81,6 +100,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "0":
 			if m.FocusedPanel > 0 {
 				m.FocusedPanel = 0
+				m.FocusScrollY = 0
+				m.TableFilterMode = false
 				m.resizeForLayout(m.Width, m.Height)
 				return m, nil
 			}
@@ -94,6 +115,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					next = 1
 				}
 				m.FocusedPanel = next
+				m.FocusScrollY = 0
+				m.TableFilterMode = false
 				m.resizeForLayout(m.Width, m.Height)
 			}
 			return m, nil
@@ -104,35 +127,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					prev = len(m.FocusablePanels)
 				}
 				m.FocusedPanel = prev
+				m.FocusScrollY = 0
+				m.TableFilterMode = false
 				m.resizeForLayout(m.Width, m.Height)
 			}
 			return m, nil
 		}
 
-		if m.FocusedPanel == 0 {
+		if tableRef, ok := m.focusedTableRef(); ok {
 			switch msg.String() {
-			case "down", "j", "ctrl+n":
-				m.scrollBy(1)
+			case "/":
+				m.TableFilterMode = true
+				if _, exists := m.TableFilter[tableRef]; !exists {
+					m.TableFilter[tableRef] = ""
+				}
 				return m, nil
-			case "up", "k", "ctrl+p":
-				m.scrollBy(-1)
-				return m, nil
-			case "pgdown", "ctrl+f", "ctrl+d":
-				m.scrollBy(maxInt(1, m.Height-4))
-				return m, nil
-			case "pgup", "ctrl+b", "ctrl+u":
-				m.scrollBy(-maxInt(1, m.Height-4))
-				return m, nil
-			case "home", "g":
-				m.ScrollY = 0
-				return m, nil
-			case "end", "G":
-				m.ScrollY = m.maxScroll()
+			case "c":
+				if m.TableFilter[tableRef] != "" {
+					m.TableFilter[tableRef] = ""
+					m.applyTableFilter(tableRef)
+				}
 				return m, nil
 			}
-		}
 
-		if tableRef, ok := m.focusedTableRef(); ok {
 			t, exists := m.Tables[tableRef]
 			if !exists {
 				return m, nil
@@ -144,6 +161,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.FocusedPanel > 0 {
+			switch msg.String() {
+			case "down", "j", "ctrl+n":
+				m.focusScrollBy(1)
+				return m, nil
+			case "up", "k", "ctrl+p":
+				m.focusScrollBy(-1)
+				return m, nil
+			case "pgdown", "ctrl+f", "ctrl+d":
+				m.focusScrollBy(maxInt(1, m.Height-4))
+				return m, nil
+			case "pgup", "ctrl+b", "ctrl+u":
+				m.focusScrollBy(-maxInt(1, m.Height-4))
+				return m, nil
+			case "home", "g":
+				m.FocusScrollY = 0
+				return m, nil
+			case "end", "G":
+				m.FocusScrollY = m.focusMaxScroll()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		switch msg.String() {
+		case "down", "j", "ctrl+n":
+			m.scrollBy(1)
+			return m, nil
+		case "up", "k", "ctrl+p":
+			m.scrollBy(-1)
+			return m, nil
+		case "pgdown", "ctrl+f", "ctrl+d":
+			m.scrollBy(maxInt(1, m.Height-4))
+			return m, nil
+		case "pgup", "ctrl+b", "ctrl+u":
+			m.scrollBy(-maxInt(1, m.Height-4))
+			return m, nil
+		case "home", "g":
+			m.ScrollY = 0
+			return m, nil
+		case "end", "G":
+			m.ScrollY = m.maxScroll()
 			return m, nil
 		}
 
@@ -183,9 +241,37 @@ func (m Model) View() tea.View {
 
 	body := ""
 	if panel, ok := m.focusPanelByNumber(m.FocusedPanel); ok {
-		hint := m.Theme.Muted.Render("(focus mode: 0/esc exit | tab next | shift+tab prev | q quit)")
-		panelBody := m.renderNode(panel.Node, width, maxInt(1, height-1))
-		body = hint + "\n" + panelBody
+		hints := []string{
+			m.Theme.Muted.Render("(focus mode: 0/esc exit | tab next | shift+tab prev | q quit)"),
+		}
+		if panel.Node.Type == "table" {
+			tableRef := panel.Node.TableRef
+			query := m.TableFilter[tableRef]
+			switch {
+			case m.TableFilterMode:
+				hints = append(hints, m.Theme.Primary.Render(fmt.Sprintf("filter> %s_", query)))
+			case query != "":
+				hints = append(hints, m.Theme.Muted.Render(fmt.Sprintf("filter: %q ( / edit | c clear )", query)))
+			default:
+				hints = append(hints, m.Theme.Muted.Render("table controls: arrows/pgup/pgdn | / filter | c clear"))
+			}
+		} else {
+			hints = append(hints, m.Theme.Muted.Render("scroll focused panel: up/down | pgup/pgdn | home/end"))
+		}
+
+		hintBlock := strings.Join(hints, "\n")
+		viewH := maxInt(1, height-len(hints))
+
+		renderH := viewH
+		if panel.Node.Type != "table" {
+			renderH = maxInt(viewH, m.preferredNodeHeight(panel.Node, width)+4)
+		}
+
+		panelBody := m.renderNode(panel.Node, width, renderH)
+		if panel.Node.Type != "table" {
+			panelBody = clampViewport(panelBody, m.FocusScrollY, viewH)
+		}
+		body = hintBlock + "\n" + panelBody
 	} else {
 		contentH := m.ContentH
 		if contentH <= 0 {
@@ -236,6 +322,8 @@ func (m *Model) resolveComponents() {
 	}
 
 	m.Tables = map[string]table.Model{}
+	m.TableBaseRows = map[string][]table.Row{}
+	m.TableFilter = map[string]string{}
 	for tableID, tableSpec := range m.Spec.Tables {
 		ds, ok := m.Spec.Datasets[tableSpec.DatasetRef]
 		if !ok {
@@ -254,6 +342,8 @@ func (m *Model) resolveComponents() {
 			table.WithHeight(12),
 		)
 		m.Tables[tableID] = t
+		m.TableBaseRows[tableID] = cloneRows(rows)
+		m.TableFilter[tableID] = ""
 	}
 }
 
@@ -274,9 +364,12 @@ func (m *Model) resizeForLayout(width, height int) {
 	m.ContentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
 	m.resizeNode(m.Spec.Layout, width, m.ContentH)
 	if panel, ok := m.focusPanelByNumber(m.FocusedPanel); ok {
-		m.resizeNode(panel.Node, width, maxInt(1, height-1))
+		m.resizeNode(panel.Node, width, maxInt(1, height-2))
+		m.FocusScrollY = clampInt(m.FocusScrollY, 0, m.focusMaxScroll())
 	} else {
 		m.FocusedPanel = 0
+		m.FocusScrollY = 0
+		m.TableFilterMode = false
 	}
 	m.ScrollY = clampInt(m.ScrollY, 0, m.maxScroll())
 }
@@ -359,11 +452,13 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 		tableH := maxInt(1, height-2-(2*padV)-2)
 		cols := buildTableColumns(tableSpec, ds, tableW)
 		t.SetColumns(cols)
-		t.SetRows(buildTableRowsForColumns(tableSpec, ds, cols))
 		t.SetWidth(tableW)
 		t.SetHeight(tableH)
 		t.SetStyles(buildTableStyles(m.Theme))
+		rows := buildTableRowsForColumns(tableSpec, ds, cols)
+		m.TableBaseRows[n.TableRef] = cloneRows(rows)
 		m.Tables[n.TableRef] = t
+		m.applyTableFilter(n.TableRef)
 	}
 }
 
@@ -643,6 +738,122 @@ func (m Model) focusedTableRef() (string, bool) {
 		return "", false
 	}
 	return panel.Node.TableRef, true
+}
+
+func (m *Model) handleTableFilterInput(tableRef string, msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "esc":
+		m.TableFilterMode = false
+		return true
+	case "enter":
+		m.TableFilterMode = false
+		return true
+	case "backspace", "ctrl+h":
+		m.TableFilter[tableRef] = removeLastRune(m.TableFilter[tableRef])
+		m.applyTableFilter(tableRef)
+		return true
+	case "ctrl+u":
+		m.TableFilter[tableRef] = ""
+		m.applyTableFilter(tableRef)
+		return true
+	}
+
+	if text, ok := keyText(msg); ok {
+		m.TableFilter[tableRef] += text
+		m.applyTableFilter(tableRef)
+		return true
+	}
+	return false
+}
+
+func keyText(msg tea.KeyMsg) (string, bool) {
+	s := msg.String()
+	if len(s) != 1 {
+		return "", false
+	}
+	if strings.HasPrefix(s, " ") {
+		return s, true
+	}
+	ch := s[0]
+	if ch < 32 || ch == 127 {
+		return "", false
+	}
+	return s, true
+}
+
+func removeLastRune(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= 1 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func (m *Model) applyTableFilter(tableRef string) {
+	t, ok := m.Tables[tableRef]
+	if !ok {
+		return
+	}
+
+	base := m.TableBaseRows[tableRef]
+	query := strings.TrimSpace(strings.ToLower(m.TableFilter[tableRef]))
+	if query == "" {
+		t.SetRows(cloneRows(base))
+		m.Tables[tableRef] = t
+		return
+	}
+
+	tokens := strings.Fields(query)
+	filtered := make([]table.Row, 0, len(base))
+	for _, row := range base {
+		matched := true
+		rowText := strings.ToLower(strings.Join(row, " "))
+		for _, tok := range tokens {
+			if !strings.Contains(rowText, tok) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			filtered = append(filtered, cloneRow(row))
+		}
+	}
+	t.SetRows(filtered)
+	m.Tables[tableRef] = t
+}
+
+func cloneRow(row table.Row) table.Row {
+	copied := make(table.Row, len(row))
+	copy(copied, row)
+	return copied
+}
+
+func cloneRows(rows []table.Row) []table.Row {
+	out := make([]table.Row, len(rows))
+	for i := range rows {
+		out[i] = cloneRow(rows[i])
+	}
+	return out
+}
+
+func (m *Model) focusScrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
+	m.FocusScrollY = clampInt(m.FocusScrollY+delta, 0, m.focusMaxScroll())
+}
+
+func (m Model) focusMaxScroll() int {
+	panel, ok := m.focusPanelByNumber(m.FocusedPanel)
+	if !ok || panel.Node.Type == "table" {
+		return 0
+	}
+	viewH := maxInt(1, m.Height-2)
+	contentH := maxInt(viewH, m.preferredNodeHeight(panel.Node, m.Width)+4)
+	return maxInt(0, contentH-viewH)
 }
 
 func (m *Model) scrollBy(delta int) {
