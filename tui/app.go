@@ -121,6 +121,7 @@ func (m *Model) resolveComponents() {
 
 		opts := []barchart.Option{
 			barchart.WithStyles(m.Theme.ChartAxis, m.Theme.ChartLabel),
+			barchart.WithBarGap(barGapForDensity(m.Theme.Density)),
 		}
 		if chartSpec.Bar != nil && chartSpec.Bar.Orientation == "horizontal" {
 			opts = append(opts, barchart.WithHorizontalBars())
@@ -133,7 +134,7 @@ func (m *Model) resolveComponents() {
 		if chartSpec.Render.ShowAxis != nil {
 			bar.SetShowAxis(*chartSpec.Render.ShowAxis)
 		}
-		setBarData(&bar, m.Theme.ChartBar, ds.Labels, ds.Values)
+		setBarData(&bar, m.Theme.ChartBar, m.Theme.ChartDanger, ds.Labels, ds.Values)
 		m.Charts[chartID] = bar
 	}
 
@@ -145,7 +146,7 @@ func (m *Model) resolveComponents() {
 		}
 
 		cols := buildTableColumns(tableSpec, ds, 80)
-		rows := buildTableRows(tableSpec, ds)
+		rows := buildTableRowsForColumns(tableSpec, ds, cols)
 
 		t := table.New(
 			table.WithColumns(cols),
@@ -182,10 +183,7 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 		if len(n.Children) == 0 {
 			return
 		}
-		gap := maxInt(0, n.Gap)
-		if height < 28 && gap > 1 {
-			gap = 1
-		}
+		gap := layoutGap(m.Theme.Density, height)
 		childHeights := splitEven(maxInt(1, height-gap*(len(n.Children)-1)), len(n.Children))
 		for i, ch := range n.Children {
 			m.resizeNode(ch, width, childHeights[i])
@@ -195,7 +193,7 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 		if len(n.Children) == 0 {
 			return
 		}
-		gap := maxInt(0, n.Gap)
+		gap := layoutGap(m.Theme.Density, width)
 		childWidths := splitByWeights(maxInt(1, width-gap*(len(n.Children)-1)), len(n.Children), n.Weights)
 		for i, ch := range n.Children {
 			m.resizeNode(ch, childWidths[i], height)
@@ -235,7 +233,9 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 		padV, padH := panelPadding(width, height, m.Theme.Density)
 		tableW := maxInt(1, width-2-(2*padH))
 		tableH := maxInt(1, height-2-(2*padV)-2)
-		t.SetColumns(buildTableColumns(tableSpec, ds, tableW))
+		cols := buildTableColumns(tableSpec, ds, tableW)
+		t.SetColumns(cols)
+		t.SetRows(buildTableRowsForColumns(tableSpec, ds, cols))
 		t.SetWidth(tableW)
 		t.SetHeight(tableH)
 		t.SetStyles(buildTableStyles(m.Theme))
@@ -250,10 +250,7 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 			return ""
 		}
 
-		gap := maxInt(0, n.Gap)
-		if height < 28 && gap > 1 {
-			gap = 1
-		}
+		gap := layoutGap(m.Theme.Density, height)
 		childHeights := splitEven(maxInt(1, height-gap*(len(n.Children)-1)), len(n.Children))
 		parts := make([]string, 0, len(n.Children))
 		for i, ch := range n.Children {
@@ -268,7 +265,7 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 			return ""
 		}
 
-		gap := maxInt(0, n.Gap)
+		gap := layoutGap(m.Theme.Density, width)
 		childWidths := splitByWeights(maxInt(1, width-gap*(len(n.Children)-1)), len(n.Children), n.Weights)
 		parts := make([]string, 0, len(n.Children))
 		for i, ch := range n.Children {
@@ -290,10 +287,13 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		if sub == "" {
 			sub = "snapshot view"
 		}
+		dividerWidth := minInt(maxInt(12, width-12), 72)
+		divider := m.Theme.Divider.Render(strings.Repeat("─", dividerWidth))
 
-		header := fmt.Sprintf("%s\n%s\n%s\n%s",
-			m.Theme.Primary.Render(title),
+		header := fmt.Sprintf("%s\n%s\n%s\n%s\n%s",
+			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
 			m.Theme.Muted.Render(sub),
+			divider,
 			m.Theme.Muted.Render(fmt.Sprintf("Spec: %s   Theme: %s/%s   Loaded: %s",
 				m.SpecPath,
 				m.Spec.Theme.Brand,
@@ -364,14 +364,15 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 func renderPanel(th brontotheme.BrontoTheme, title, body string, width, height int) string {
 	padV, padH := panelPadding(width, height, th.Density)
 	spacing := "\n\n"
-	if width < 50 || height < 10 {
+	if width < 50 || height < 10 || th.Density == "compact" {
 		spacing = "\n"
 	}
 
 	panel := th.Panel.Copy().
 		Padding(padV, padH).
 		Width(width)
-	return panel.Render(th.PanelTitle.Render(title) + spacing + body)
+	titleLine := th.PanelAccent.Render("▌ ") + th.PanelTitle.Render(title)
+	return panel.Render(titleLine + spacing + body)
 }
 
 const (
@@ -417,7 +418,7 @@ func buildTableColumns(t spec.TableSpec, ds spec.DatasetSpec, totalWidth int) []
 	return cols
 }
 
-func buildTableRows(t spec.TableSpec, ds spec.DatasetSpec) []table.Row {
+func buildTableRowsForColumns(t spec.TableSpec, ds spec.DatasetSpec, cols []table.Column) []table.Row {
 	indexByName := make(map[string]int, len(ds.Columns))
 	for i, c := range ds.Columns {
 		indexByName[c] = i
@@ -436,9 +437,16 @@ func buildTableRows(t spec.TableSpec, ds spec.DatasetSpec) []table.Row {
 		src := ds.Rows[i]
 		dst := make(table.Row, len(t.Columns))
 		for colIdx, col := range t.Columns {
-			if idx, ok := indexByName[col.Key]; ok && idx < len(src) {
-				dst[colIdx] = src[idx]
+			colWidth := minAnyWidth
+			if colIdx < len(cols) && cols[colIdx].Width > 0 {
+				colWidth = cols[colIdx].Width
 			}
+			colType := detectColType(col.Key, col.Title)
+			value := ""
+			if idx, ok := indexByName[col.Key]; ok && idx < len(src) {
+				value = src[idx]
+			}
+			dst[colIdx] = truncateCell(value, colWidth, colType)
 		}
 		rows = append(rows, dst)
 	}
@@ -776,15 +784,69 @@ func cloneTableColumns(cols []spec.TableColumnSpec) []spec.TableColumnSpec {
 	return out
 }
 
+func layoutGap(density string, available int) int {
+	if density == "compact" || available < 24 {
+		return 0
+	}
+	return 1
+}
+
 func panelPadding(width, height int, density string) (vertical, horizontal int) {
-	if width < 50 || height < 10 || density == "compact" {
+	if density == "compact" {
+		return 0, 0
+	}
+	if width < 40 || height < 8 {
 		return 0, 1
 	}
-	return 1, 2
+	return 1, 1
 }
 
 func panelTooSmallMessage(width, height, minW, minH int) string {
 	return fmt.Sprintf("panel too small (%dx%d). need at least %dx%d", width, height, minW, minH)
+}
+
+func truncateCell(v string, width int, ct colType) string {
+	if width <= 0 {
+		return ""
+	}
+	if runeWidth(v) <= width {
+		return v
+	}
+
+	switch ct {
+	case colID:
+		return middleEllipsis(v, width)
+	default:
+		return endEllipsis(v, width)
+	}
+}
+
+func endEllipsis(v string, width int) string {
+	if width <= 1 {
+		return "…"
+	}
+	runes := []rune(v)
+	if len(runes) <= width {
+		return v
+	}
+	return string(runes[:width-1]) + "…"
+}
+
+func middleEllipsis(v string, width int) string {
+	if width <= 1 {
+		return "…"
+	}
+	if width <= 3 {
+		return endEllipsis(v, width)
+	}
+
+	runes := []rune(v)
+	if len(runes) <= width {
+		return v
+	}
+	left := (width - 1) / 2
+	right := (width - 1) - left
+	return string(runes[:left]) + "…" + string(runes[len(runes)-right:])
 }
 
 func buildTableStyles(th brontotheme.BrontoTheme) table.Styles {
@@ -822,17 +884,22 @@ func minInt(a, b int) int {
 	return b
 }
 
-func setBarData(bar *barchart.Model, barStyle lipgloss.Style, labels []string, values []float64) {
+func setBarData(bar *barchart.Model, barStyle lipgloss.Style, dangerBarStyle lipgloss.Style, labels []string, values []float64) {
 	data := make([]barchart.BarData, 0, len(labels))
 	for i, l := range labels {
 		v := 0.0
 		if i < len(values) {
 			v = values[i]
 		}
+
+		style := barStyle
+		if isDangerLabel(l) {
+			style = dangerBarStyle
+		}
 		data = append(data, barchart.BarData{
 			Label: l,
 			Values: []barchart.BarValue{
-				{Name: l, Value: v, Style: barStyle},
+				{Name: l, Value: v, Style: style},
 			},
 		})
 	}
@@ -840,6 +907,23 @@ func setBarData(bar *barchart.Model, barStyle lipgloss.Style, labels []string, v
 	bar.Clear()
 	bar.PushAll(data)
 	bar.Draw()
+}
+
+func isDangerLabel(label string) bool {
+	s := strings.ToLower(strings.TrimSpace(label))
+	return strings.Contains(s, "critical") ||
+		strings.Contains(s, "fatal") ||
+		strings.Contains(s, "panic") ||
+		strings.Contains(s, "sev1") ||
+		strings.Contains(s, "p0") ||
+		strings.Contains(s, "error")
+}
+
+func barGapForDensity(density string) int {
+	if density == "compact" {
+		return 0
+	}
+	return 1
 }
 
 func splitByWeights(total, count int, weights []int) []int {
