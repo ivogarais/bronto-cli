@@ -10,19 +10,28 @@ type Refresh struct {
 	EveryMs int `json:"everyMs"`
 }
 
+type Query struct {
+	Kind string         `json:"kind"` // "bar" or "table"
+	Tool string         `json:"tool,omitempty"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
 type Widget struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`  // "barchart" or "table" (for now)
-	Title string `json:"title"` // panel title
-	// Table-specific (optional)
+	ID       string `json:"id"`
+	Type     string `json:"type"`     // "barchart" or "table"
+	Title    string `json:"title"`    // panel title
+	QueryRef string `json:"queryRef"` // required now
+
+	// Table-specific (optional; may be overridden by query results later)
 	Columns []string `json:"columns,omitempty"`
 }
 
 type DashboardSpec struct {
-	Version string   `json:"version"`
-	Title   string   `json:"title"`
-	Refresh Refresh  `json:"refresh"`
-	Widgets []Widget `json:"widgets"`
+	Version string           `json:"version"`
+	Title   string           `json:"title"`
+	Refresh Refresh          `json:"refresh"`
+	Queries map[string]Query `json:"queries"`
+	Widgets []Widget         `json:"widgets"`
 }
 
 func Load(path string) (*DashboardSpec, error) {
@@ -53,6 +62,9 @@ func (s DashboardSpec) Validate() error {
 	if len(s.Widgets) == 0 {
 		return fmt.Errorf("spec invalid: must include at least one widget in \"widgets\"")
 	}
+	if len(s.Queries) == 0 {
+		return fmt.Errorf("spec invalid: must include non-empty \"queries\"")
+	}
 
 	seen := map[string]bool{}
 	for i, w := range s.Widgets {
@@ -78,8 +90,33 @@ func (s DashboardSpec) Validate() error {
 			return fmt.Errorf("spec invalid: widgets[%d] missing required field \"title\"", i)
 		}
 
-		if w.Type == "table" && len(w.Columns) == 0 {
-			return fmt.Errorf("spec invalid: table widget %q must include non-empty \"columns\"", w.ID)
+		if w.QueryRef == "" {
+			return fmt.Errorf("spec invalid: widget %q missing required field \"queryRef\"", w.ID)
+		}
+		q, ok := s.Queries[w.QueryRef]
+		if !ok {
+			return fmt.Errorf("spec invalid: widget %q references missing query %q", w.ID, w.QueryRef)
+		}
+
+		// Type-kind consistency
+		switch w.Type {
+		case "barchart":
+			if q.Kind != "bar" {
+				return fmt.Errorf("spec invalid: widget %q is barchart but query %q kind is %q", w.ID, w.QueryRef, q.Kind)
+			}
+		case "table":
+			if q.Kind != "table" {
+				return fmt.Errorf("spec invalid: widget %q is table but query %q kind is %q", w.ID, w.QueryRef, q.Kind)
+			}
+		}
+	}
+
+	// Validate query kinds
+	for id, q := range s.Queries {
+		switch q.Kind {
+		case "bar", "table":
+		default:
+			return fmt.Errorf("spec invalid: query %q has unsupported kind %q", id, q.Kind)
 		}
 	}
 

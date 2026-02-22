@@ -6,6 +6,7 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/ivogarais/bronto-cli/datasource"
 	"github.com/ivogarais/bronto-cli/spec"
 	"github.com/ivogarais/bronto-cli/tui"
 	"github.com/spf13/cobra"
@@ -26,7 +27,8 @@ var serveCmd = &cobra.Command{
 			return err
 		}
 
-		m := tui.NewModel(s, specPath)
+		ds := datasource.NewFake()
+		m := tui.NewModel(s, specPath, ds)
 		p := tea.NewProgram(m)
 
 		if _, err := p.Run(); err != nil {
