@@ -283,19 +283,8 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		if m.Spec != nil && n.TitleRef == "$title" {
 			title = m.Spec.Title
 		}
-		sub := n.SubTitle
-		if sub == "" {
-			sub = "snapshot view"
-		}
-		header := fmt.Sprintf("%s\n%s\n%s\n%s",
+		header := fmt.Sprintf("%s\n%s",
 			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
-			m.Theme.Muted.Render(sub),
-			m.Theme.Muted.Render(fmt.Sprintf("Spec: %s   Theme: %s/%s   Loaded: %s",
-				m.SpecPath,
-				m.Spec.Theme.Brand,
-				m.Spec.Theme.Density,
-				m.LoadedAt.Format("15:04:05"),
-			)),
 			m.Theme.Muted.Render("(press q to quit)"),
 		)
 		header = trimTrailingWhitespace(header)
