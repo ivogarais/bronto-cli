@@ -287,13 +287,9 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		if sub == "" {
 			sub = "snapshot view"
 		}
-		dividerWidth := minInt(maxInt(12, width-12), 72)
-		divider := m.Theme.Divider.Render(strings.Repeat("─", dividerWidth))
-
-		header := fmt.Sprintf("%s\n%s\n%s\n%s\n%s",
+		header := fmt.Sprintf("%s\n%s\n%s\n%s",
 			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
 			m.Theme.Muted.Render(sub),
-			divider,
 			m.Theme.Muted.Render(fmt.Sprintf("Spec: %s   Theme: %s/%s   Loaded: %s",
 				m.SpecPath,
 				m.Spec.Theme.Brand,
@@ -302,6 +298,7 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 			)),
 			m.Theme.Muted.Render("(press q to quit)"),
 		)
+		header = trimTrailingWhitespace(header)
 
 		box := m.Theme.HeaderBox.Copy().Width(width)
 		return box.Render(header)
@@ -372,7 +369,21 @@ func renderPanel(th brontotheme.BrontoTheme, title, body string, width, height i
 		Padding(padV, padH).
 		Width(width)
 	titleLine := th.PanelAccent.Render("▌ ") + th.PanelTitle.Render(title)
+	innerW := maxInt(1, width-2-(2*padH))
+	body = lipgloss.NewStyle().
+		Width(innerW).
+		MaxWidth(innerW).
+		Render(body)
+	body = trimTrailingWhitespace(body)
 	return panel.Render(titleLine + spacing + body)
+}
+
+func trimTrailingWhitespace(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	return strings.Join(lines, "\n")
 }
 
 const (
@@ -852,11 +863,11 @@ func middleEllipsis(v string, width int) string {
 func buildTableStyles(th brontotheme.BrontoTheme) table.Styles {
 	s := table.DefaultStyles()
 	s.Header = th.TableHeader.Copy().
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color(brontotheme.BrontoBorder)).
-		BorderBottom(true)
-	s.Cell = th.TableCell.Copy()
-	s.Selected = th.TableSelected.Copy()
+		Background(lipgloss.Color(brontotheme.BrontoPanelBg))
+	s.Cell = th.TableCell.Copy().
+		Background(lipgloss.Color(brontotheme.BrontoPanelBg))
+	s.Selected = th.TableCell.Copy().
+		Background(lipgloss.Color(brontotheme.BrontoPanelBg))
 	return s
 }
 
