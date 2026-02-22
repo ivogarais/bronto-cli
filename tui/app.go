@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type Model struct {
 
 	Width    int
 	Height   int
+	ContentH int
+	ScrollY  int
 	Status   string
 	LoadedAt time.Time
 }
@@ -60,6 +63,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
+		case "j":
+			m.scrollBy(1)
+			return m, nil
+		case "k":
+			m.scrollBy(-1)
+			return m, nil
+		case "pgdown", "ctrl+f":
+			m.scrollBy(maxInt(1, m.Height-4))
+			return m, nil
+		case "pgup", "ctrl+b":
+			m.scrollBy(-maxInt(1, m.Height-4))
+			return m, nil
+		case "g":
+			m.ScrollY = 0
+			return m, nil
+		case "G":
+			m.ScrollY = m.maxScroll()
+			return m, nil
 		}
 
 		for id, t := range m.Tables {
@@ -96,8 +117,14 @@ func (m Model) View() tea.View {
 		height = 36
 	}
 
-	body := m.renderNode(m.Spec.Layout, width, height)
+	contentH := m.ContentH
+	if contentH <= 0 {
+		contentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
+	}
+
+	body := m.renderNode(m.Spec.Layout, width, contentH)
 	body = m.Theme.AppBg.Copy().Render(body)
+	body = clampViewport(body, m.ScrollY, height)
 	v := tea.NewView(body + "\n")
 	v.AltScreen = true
 	return v
@@ -174,7 +201,9 @@ func (m *Model) resizeForLayout(width, height int) {
 
 	m.Width = width
 	m.Height = height
-	m.resizeNode(m.Spec.Layout, width, height)
+	m.ContentH = maxInt(height, m.preferredNodeHeight(m.Spec.Layout, width))
+	m.resizeNode(m.Spec.Layout, width, m.ContentH)
+	m.ScrollY = clampInt(m.ScrollY, 0, m.maxScroll())
 }
 
 func (m *Model) resizeNode(n spec.Node, width, height int) {
@@ -184,13 +213,33 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 			return
 		}
 		gap := layoutGap(m.Theme.Density, height)
-		childHeights := splitEven(maxInt(1, height-gap*(len(n.Children)-1)), len(n.Children))
+		childHeights := splitByPreferences(
+			maxInt(1, height-gap*(len(n.Children)-1)),
+			m.preferredChildHeightsForColumn(n.Children, width),
+		)
 		for i, ch := range n.Children {
 			m.resizeNode(ch, width, childHeights[i])
 		}
 
 	case "row":
 		if len(n.Children) == 0 {
+			return
+		}
+		wrapped := wrapRowChildren(n.Children, n.Weights, maxPanelsPerRow)
+		if len(wrapped) > 1 {
+			gap := layoutGap(m.Theme.Density, height)
+			rowHeights := splitByPreferences(
+				maxInt(1, height-gap*(len(wrapped)-1)),
+				m.preferredHeightsForWrappedRows(wrapped, width),
+			)
+			for i, group := range wrapped {
+				rowNode := spec.Node{
+					Type:     "row",
+					Children: group.Children,
+					Weights:  group.Weights,
+				}
+				m.resizeNode(rowNode, width, rowHeights[i])
+			}
 			return
 		}
 		gap := layoutGap(m.Theme.Density, width)
@@ -251,7 +300,10 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		}
 
 		gap := layoutGap(m.Theme.Density, height)
-		childHeights := splitEven(maxInt(1, height-gap*(len(n.Children)-1)), len(n.Children))
+		childHeights := splitByPreferences(
+			maxInt(1, height-gap*(len(n.Children)-1)),
+			m.preferredChildHeightsForColumn(n.Children, width),
+		)
 		parts := make([]string, 0, len(n.Children))
 		for i, ch := range n.Children {
 			child := m.renderNode(ch, width, childHeights[i])
@@ -263,6 +315,26 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 	case "row":
 		if len(n.Children) == 0 {
 			return ""
+		}
+
+		wrapped := wrapRowChildren(n.Children, n.Weights, maxPanelsPerRow)
+		if len(wrapped) > 1 {
+			gap := layoutGap(m.Theme.Density, height)
+			rowHeights := splitByPreferences(
+				maxInt(1, height-gap*(len(wrapped)-1)),
+				m.preferredHeightsForWrappedRows(wrapped, width),
+			)
+			rows := make([]string, 0, len(wrapped))
+			for i, group := range wrapped {
+				rowNode := spec.Node{
+					Type:     "row",
+					Children: group.Children,
+					Weights:  group.Weights,
+				}
+				row := m.renderNode(rowNode, width, rowHeights[i])
+				rows = append(rows, lipgloss.NewStyle().Width(width).MaxWidth(width).Render(row))
+			}
+			return strings.Join(rows, strings.Repeat("\n", gap+1))
 		}
 
 		gap := layoutGap(m.Theme.Density, width)
@@ -285,7 +357,7 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		}
 		header := fmt.Sprintf("%s\n%s",
 			m.Theme.PanelAccent.Render("▌ ")+m.Theme.AppTitle.Render(title),
-			m.Theme.Muted.Render("(press q to quit)"),
+			m.Theme.Muted.Render("(q quit | j/k scroll | pgup/pgdn)"),
 		)
 		header = trimTrailingWhitespace(header)
 
@@ -303,14 +375,23 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 		}
 
 		content := "(missing chart)"
+		var legend string
 		if c, ok := m.Charts[n.ChartRef]; ok {
 			content = c.View()
+			if chartFound && chartSpec.Family == "bar" {
+				if ds, ok := m.Spec.Datasets[chartSpec.DatasetRef]; ok {
+					legend = renderBarLegend(m.Theme, ds, width)
+				}
+			}
 		} else if chartFound {
 			if chartSpec.Family != "bar" {
 				content = fmt.Sprintf("unsupported chart family %q (renderer currently implements bar only)", chartSpec.Family)
 			} else {
 				content = "(chart data unavailable)"
 			}
+		}
+		if legend != "" {
+			content += "\n" + legend
 		}
 		if width < minChartPanelWidth || height < minChartPanelHeight {
 			content = panelTooSmallMessage(width, height, minChartPanelWidth, minChartPanelHeight)
@@ -376,6 +457,12 @@ func trimTrailingWhitespace(s string) string {
 }
 
 const (
+	maxPanelsPerRow = 3
+
+	preferredChartPanelHeight = 14
+	preferredTablePanelHeight = 12
+	preferredHeaderHeight     = 4
+
 	minChartPanelWidth  = 24
 	minChartPanelHeight = 8
 	minTablePanelWidth  = 30
@@ -386,6 +473,11 @@ const (
 	minFixedWidth = 6
 	minFlexWidth  = 12
 )
+
+type rowGroup struct {
+	Children []spec.Node
+	Weights  []int
+}
 
 type colType int
 
@@ -398,6 +490,212 @@ const (
 	colMessage
 	colNumeric
 )
+
+func (m *Model) scrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
+	m.ScrollY = clampInt(m.ScrollY+delta, 0, m.maxScroll())
+}
+
+func (m Model) maxScroll() int {
+	if m.ContentH <= m.Height {
+		return 0
+	}
+	return maxInt(0, m.ContentH-m.Height)
+}
+
+func clampViewport(content string, start, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+
+	maxStart := maxInt(0, len(lines)-maxLines)
+	start = clampInt(start, 0, maxStart)
+	end := minInt(len(lines), start+maxLines)
+	visible := lines[start:end]
+	for len(visible) < maxLines {
+		visible = append(visible, "")
+	}
+	return strings.Join(visible, "\n")
+}
+
+func wrapRowChildren(children []spec.Node, weights []int, perRow int) []rowGroup {
+	if perRow <= 0 {
+		perRow = maxPanelsPerRow
+	}
+	if len(children) <= perRow {
+		return []rowGroup{{Children: children, Weights: weights}}
+	}
+
+	useWeights := len(weights) == len(children)
+	groups := make([]rowGroup, 0, (len(children)+perRow-1)/perRow)
+	for start := 0; start < len(children); start += perRow {
+		end := minInt(len(children), start+perRow)
+		group := rowGroup{
+			Children: append([]spec.Node(nil), children[start:end]...),
+		}
+		if useWeights {
+			group.Weights = append([]int(nil), weights[start:end]...)
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func splitByPreferences(total int, prefs []int) []int {
+	if len(prefs) == 0 {
+		return nil
+	}
+	if total < len(prefs) {
+		total = len(prefs)
+	}
+
+	normalized := make([]int, len(prefs))
+	sumPref := 0
+	for i, p := range prefs {
+		if p < 1 {
+			p = 1
+		}
+		normalized[i] = p
+		sumPref += p
+	}
+	if sumPref <= 0 {
+		return splitEven(total, len(prefs))
+	}
+
+	if sumPref <= total {
+		out := append([]int(nil), normalized...)
+		out[len(out)-1] += total - sumPref
+		return out
+	}
+
+	return splitByWeights(total, len(normalized), normalized)
+}
+
+func (m Model) preferredChildHeightsForColumn(children []spec.Node, width int) []int {
+	prefs := make([]int, len(children))
+	for i, child := range children {
+		prefs[i] = m.preferredNodeHeight(child, width)
+	}
+	return prefs
+}
+
+func (m Model) preferredHeightsForWrappedRows(groups []rowGroup, width int) []int {
+	prefs := make([]int, len(groups))
+	for i, group := range groups {
+		panelWidth := maxInt(1, width/maxInt(1, len(group.Children)))
+		rowPref := 1
+		for _, child := range group.Children {
+			rowPref = maxInt(rowPref, m.preferredNodeHeight(child, panelWidth))
+		}
+		prefs[i] = rowPref
+	}
+	return prefs
+}
+
+func (m Model) preferredNodeHeight(n spec.Node, width int) int {
+	switch n.Type {
+	case "header":
+		if m.Theme.Density == "compact" {
+			return 3
+		}
+		return preferredHeaderHeight
+	case "chart":
+		if m.Theme.Density == "compact" {
+			return maxInt(minChartPanelHeight, preferredChartPanelHeight-2)
+		}
+		return preferredChartPanelHeight
+	case "table":
+		if m.Theme.Density == "compact" {
+			return maxInt(minTablePanelHeight, preferredTablePanelHeight-2)
+		}
+		return preferredTablePanelHeight
+	case "text":
+		lines := strings.Count(n.Text, "\n") + 1
+		return maxInt(1, lines)
+	case "row":
+		if len(n.Children) == 0 {
+			return 1
+		}
+		wrapped := wrapRowChildren(n.Children, n.Weights, maxPanelsPerRow)
+		if len(wrapped) == 1 {
+			panelWidth := maxInt(1, width/maxInt(1, len(n.Children)))
+			rowPref := 1
+			for _, child := range n.Children {
+				rowPref = maxInt(rowPref, m.preferredNodeHeight(child, panelWidth))
+			}
+			return rowPref
+		}
+
+		gap := layoutGap(m.Theme.Density, 80)
+		total := 0
+		for i, group := range wrapped {
+			panelWidth := maxInt(1, width/maxInt(1, len(group.Children)))
+			rowPref := 1
+			for _, child := range group.Children {
+				rowPref = maxInt(rowPref, m.preferredNodeHeight(child, panelWidth))
+			}
+			total += rowPref
+			if i < len(wrapped)-1 {
+				total += gap
+			}
+		}
+		return total
+	case "col":
+		if len(n.Children) == 0 {
+			return 1
+		}
+		gap := layoutGap(m.Theme.Density, 80)
+		total := 0
+		for i, child := range n.Children {
+			total += m.preferredNodeHeight(child, width)
+			if i < len(n.Children)-1 {
+				total += gap
+			}
+		}
+		return total
+	default:
+		return maxInt(minChartPanelHeight, preferredChartPanelHeight)
+	}
+}
+
+func renderBarLegend(th brontotheme.BrontoTheme, ds spec.DatasetSpec, width int) string {
+	if len(ds.Labels) == 0 || len(ds.Values) == 0 {
+		return ""
+	}
+
+	limit := len(ds.Labels)
+	if limit > len(ds.Values) {
+		limit = len(ds.Values)
+	}
+	if limit > 8 {
+		limit = 8
+	}
+	if limit <= 0 {
+		return ""
+	}
+
+	total := 0.0
+	for i := 0; i < limit; i++ {
+		total += ds.Values[i]
+	}
+
+	lines := make([]string, 0, limit+2)
+	lines = append(lines, th.Muted.Render("Counts"))
+	for i := 0; i < limit; i++ {
+		label := truncateCell(ds.Labels[i], maxInt(8, width/3), colDefault)
+		value := formatMetricValue(ds.Values[i])
+		lines = append(lines, th.Text.Render(fmt.Sprintf("%s: %s", label, value)))
+	}
+	lines = append(lines, th.Muted.Render(fmt.Sprintf("Total: %s", formatMetricValue(total))))
+	return strings.Join(lines, "\n")
+}
 
 func buildTableColumns(t spec.TableSpec, ds spec.DatasetSpec, totalWidth int) []table.Column {
 	colsSpec := ensureFlexColumn(cloneTableColumns(t.Columns))
@@ -847,6 +1145,13 @@ func middleEllipsis(v string, width int) string {
 	left := (width - 1) / 2
 	right := (width - 1) - left
 	return string(runes[:left]) + "…" + string(runes[len(runes)-right:])
+}
+
+func formatMetricValue(v float64) string {
+	if math.Abs(v-math.Round(v)) < 0.000001 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return fmt.Sprintf("%.2f", v)
 }
 
 func buildTableStyles(th brontotheme.BrontoTheme) table.Styles {
