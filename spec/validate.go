@@ -89,6 +89,15 @@ func (s *AppSpec) Validate() error {
 }
 
 func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
+	hasLive := d.Live != nil
+	if hasLive {
+		normalized, err := validateLiveQuery(id, *d.Live)
+		if err != nil {
+			return DatasetSpec{}, err
+		}
+		d.Live = &normalized
+	}
+
 	switch d.Format {
 	case "", "number", "bytes", "duration":
 	default:
@@ -105,13 +114,13 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 
 	switch d.Kind {
 	case "categorySeries":
-		if len(d.Labels) == 0 {
+		if len(d.Labels) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q categorySeries labels must be non-empty", id)
 		}
-		if len(d.Values) == 0 {
+		if len(d.Values) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q categorySeries values must be non-empty", id)
 		}
-		if len(d.Labels) != len(d.Values) {
+		if len(d.Labels) > 0 && len(d.Values) > 0 && len(d.Labels) != len(d.Values) {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q categorySeries labels/values length mismatch", id)
 		}
 
@@ -136,7 +145,7 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		}
 
 	case "xySeries":
-		if len(d.XY) == 0 {
+		if len(d.XY) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q xySeries must include non-empty \"xy\"", id)
 		}
 		seen := map[string]bool{}
@@ -154,7 +163,7 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		}
 
 	case "timeSeries":
-		if len(d.Time) == 0 {
+		if len(d.Time) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q timeSeries must include non-empty \"time\"", id)
 		}
 		seen := map[string]bool{}
@@ -198,7 +207,7 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		}
 
 	case "ohlcSeries":
-		if len(d.Candles) == 0 {
+		if len(d.Candles) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q ohlcSeries must include non-empty \"candles\"", id)
 		}
 		type timedCandle struct {
@@ -235,8 +244,11 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		d.Candles = sorted
 
 	case "heatmapCells":
-		if d.Heatmap == nil {
+		if d.Heatmap == nil && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q heatmapCells requires non-null heatmap", id)
+		}
+		if d.Heatmap == nil && hasLive {
+			break
 		}
 		h := d.Heatmap
 		dense := h.Width != 0 || h.Height != 0 || len(h.Values) > 0
@@ -271,7 +283,7 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 		}
 
 	case "valueSeries":
-		if len(d.Value) == 0 {
+		if len(d.Value) == 0 && !hasLive {
 			return DatasetSpec{}, fmt.Errorf("spec invalid: dataset %q valueSeries must include non-empty \"value\"", id)
 		}
 
@@ -280,6 +292,41 @@ func validateDataset(id string, d DatasetSpec) (DatasetSpec, error) {
 	}
 
 	return d, nil
+}
+
+func validateLiveQuery(datasetID string, live LiveQuerySpec) (LiveQuerySpec, error) {
+	if len(live.LogIDs) == 0 {
+		return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.logIds must be non-empty", datasetID)
+	}
+	for i, logID := range live.LogIDs {
+		if strings.TrimSpace(logID) == "" {
+			return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.logIds[%d] must be non-empty", datasetID, i)
+		}
+	}
+
+	if live.Mode == "" {
+		live.Mode = "metrics"
+	}
+	if live.Mode != "metrics" && live.Mode != "logs" {
+		return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.mode must be metrics|logs", datasetID)
+	}
+	if live.LookbackSec <= 0 {
+		live.LookbackSec = 1800
+	}
+	if live.LookbackSec < 30 {
+		return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.lookbackSec must be >= 30", datasetID)
+	}
+	if live.Limit <= 0 {
+		live.Limit = 100
+	}
+	if live.Limit > 5000 {
+		return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.limit must be <= 5000", datasetID)
+	}
+
+	if live.Mode == "metrics" && len(live.MetricFunctions) == 0 {
+		return LiveQuerySpec{}, fmt.Errorf("spec invalid: dataset %q liveQuery.metricFunctions must be non-empty when mode=metrics", datasetID)
+	}
+	return live, nil
 }
 
 func validateChart(id string, c ChartSpec, datasets map[string]DatasetSpec, defaults ChartRender) (ChartSpec, error) {

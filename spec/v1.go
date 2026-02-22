@@ -158,8 +158,9 @@ type TableColumnSpec struct {
 type DatasetSpec struct {
 	Kind string `json:"kind"` // categorySeries|table|xySeries|timeSeries|ohlcSeries|heatmapCells|valueSeries
 
-	Unit   string `json:"unit,omitempty"`   // e.g. "ms", "%", "count"
-	Format string `json:"format,omitempty"` // number|bytes|duration
+	Unit   string         `json:"unit,omitempty"`   // e.g. "ms", "%", "count"
+	Format string         `json:"format,omitempty"` // number|bytes|duration
+	Live   *LiveQuerySpec `json:"liveQuery,omitempty"`
 
 	// categorySeries (bar)
 	Labels []string  `json:"labels,omitempty"`
@@ -183,6 +184,16 @@ type DatasetSpec struct {
 
 	// valueSeries
 	Value []float64 `json:"value,omitempty"`
+}
+
+type LiveQuerySpec struct {
+	Mode            string   `json:"mode,omitempty"` // metrics|logs
+	LogIDs          []string `json:"logIds,omitempty"`
+	MetricFunctions []string `json:"metricFunctions,omitempty"`
+	SearchFilter    string   `json:"searchFilter,omitempty"`
+	GroupByKeys     []string `json:"groupByKeys,omitempty"`
+	LookbackSec     int      `json:"lookbackSec,omitempty"`
+	Limit           int      `json:"limit,omitempty"`
 }
 
 type XYSeries struct {

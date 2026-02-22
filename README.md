@@ -24,3 +24,31 @@ bronto serve --spec /path/to/dashboard.json --refresh-ms 2000
 - Keep polling logic in your Go/agent runtime.
 - That runtime updates the dashboard spec file as fresh Bronto data arrives.
 - `bronto-cli` runs in live mode and continuously renders new snapshots.
+
+## Native liveQuery polling
+
+`bronto-cli` can poll Bronto directly when datasets include `liveQuery`.
+
+Environment:
+
+```bash
+export BRONTO_API_KEY=...
+export BRONTO_API_ENDPOINT=https://api.eu.bronto.io  # optional
+```
+
+Dataset example:
+
+```json
+{
+  "kind": "categorySeries",
+  "labels": ["seed"],
+  "values": [0],
+  "liveQuery": {
+    "mode": "metrics",
+    "logIds": ["fb7f985f-3558-0232-d30e-42142719a400"],
+    "metricFunctions": ["COUNT(*)"],
+    "groupByKeys": ["event.type"],
+    "lookbackSec": 1800
+  }
+}
+```

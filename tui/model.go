@@ -59,6 +59,7 @@ type liveRefreshResultMsg struct {
 	spec     *spec.AppSpec
 	loadedAt time.Time
 	modTime  time.Time
+	liveData bool
 	err      error
 }
 
@@ -124,6 +125,13 @@ func reloadSpecCmd(specPath string) tea.Cmd {
 			loadedAt: time.Now().UTC(),
 			err:      err,
 		}
+		if err == nil && s != nil {
+			hasLive, hydrateErr := hydrateSpecWithLiveData(s)
+			msg.liveData = hasLive
+			if hydrateErr != nil {
+				msg.err = hydrateErr
+			}
+		}
 		if statErr == nil {
 			msg.modTime = stat.ModTime().UTC()
 		}
@@ -153,7 +161,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		changed := msg.modTime.IsZero() || !msg.modTime.Equal(m.lastSpecModTime)
+		changed := msg.liveData || msg.modTime.IsZero() || !msg.modTime.Equal(m.lastSpecModTime)
 		if changed {
 			m.applySpecSnapshot(msg.spec)
 			m.lastSpecModTime = msg.modTime
