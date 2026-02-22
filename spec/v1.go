@@ -150,7 +150,7 @@ type TableSpec struct {
 type TableColumnSpec struct {
 	Key   string      `json:"key"`
 	Title string      `json:"title"`
-	Width interface{} `json:"width"` // "auto"|"flex"|number
+	Width interface{} `json:"width,omitempty"` // omit or null means auto; also supports "auto"|"flex"|number
 }
 
 // ---------- Datasets (tagged union) ----------
