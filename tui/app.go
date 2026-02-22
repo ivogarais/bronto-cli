@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/ivogarais/bronto-cli/spec"
 )
 
 type tickMsg time.Time
@@ -14,6 +17,7 @@ type Model struct {
 	Title          string
 	SpecPath       string
 	RefreshEveryMs int
+	Widgets        []spec.Widget
 
 	StartedAt time.Time
 	Now       time.Time
@@ -22,15 +26,16 @@ type Model struct {
 	Height    int
 }
 
-func NewModel(title, specPath string, refreshEveryMs int) Model {
+func NewModel(s *spec.DashboardSpec, specPath string) Model {
 	now := time.Now()
 	return Model{
-		Title:          title,
+		Title:          s.Title,
 		SpecPath:       specPath,
-		RefreshEveryMs: refreshEveryMs,
+		RefreshEveryMs: s.Refresh.EveryMs,
+		Widgets:        s.Widgets,
 		StartedAt:      now,
 		Now:            now,
-		Status:         "Running (spec loaded; no MCP yet)",
+		Status:         "Running (widgets rendered; still fake data)",
 	}
 }
 
@@ -57,21 +62,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(m.Title)
-	uptime := m.Now.Sub(m.StartedAt).Round(time.Second).String()
+	titleStyle := lipgloss.NewStyle().Bold(true).Padding(0, 1)
+
+	headerBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 1)
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2)
+
+	uptime := m.Now.Sub(m.StartedAt).Truncate(time.Second)
 
 	refresh := "default (1000ms)"
 	if m.RefreshEveryMs > 0 {
 		refresh = fmt.Sprintf("%dms", m.RefreshEveryMs)
 	}
 
-	body := fmt.Sprintf(
-		"Spec:    %s\nStatus:  %s\nRefresh: %s\nUptime:  %s\n\nPress q to quit.",
-		m.SpecPath,
-		m.Status,
-		refresh,
-		uptime,
+	header := headerBox.Render(
+		fmt.Sprintf("%s\nSpec: %s   Refresh: %s   Uptime: %s\nStatus: %s\n(press q to quit)",
+			titleStyle.Render(m.Title),
+			m.SpecPath,
+			refresh,
+			uptime,
+			m.Status,
+		),
 	)
 
-	return fmt.Sprintf("%s\n\n%s", title, body)
+	var panels []string
+	for _, w := range m.Widgets {
+		switch w.Type {
+		case "barchart":
+			panels = append(panels, panelStyle.Render(renderBarChartPlaceholder(w)))
+		case "table":
+			panels = append(panels, panelStyle.Render(renderTablePlaceholder(w)))
+		default:
+			panels = append(panels, panelStyle.Render(fmt.Sprintf("%s\n(unknown widget type)", w.Title)))
+		}
+	}
+
+	return header + "\n\n" + strings.Join(panels, "\n\n") + "\n"
+}
+
+func renderBarChartPlaceholder(w spec.Widget) string {
+	// Fake bars just to prove layout. Next step we'll feed real data.
+	lines := []string{
+		fmt.Sprintf("%s (bar chart)", w.Title),
+		"",
+		"api      ████████████  120",
+		"worker   ████████       80",
+		"web      ██████         60",
+		"db       ██             20",
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderTablePlaceholder(w spec.Widget) string {
+	lines := []string{
+		fmt.Sprintf("%s (table)", w.Title),
+		"",
+		strings.Join(w.Columns, " | "),
+		strings.Repeat("-", 3*len(strings.Join(w.Columns, " | "))),
+	}
+
+	// Fake rows
+	lines = append(lines,
+		"2026-02-22T12:00:01Z | api | NullPointerException",
+		"2026-02-22T12:00:03Z | worker | timeout contacting db",
+		"2026-02-22T12:00:04Z | web | 500 /checkout",
+	)
+	return strings.Join(lines, "\n")
 }

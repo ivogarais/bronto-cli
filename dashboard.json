@@ -1,5 +1,18 @@
 {
   "version": "1",
   "title": "Errors (Last 30m)",
-  "refresh": { "everyMs": 2000 }
+  "refresh": { "everyMs": 2000 },
+  "widgets": [
+    {
+      "id": "err_by_service",
+      "type": "barchart",
+      "title": "Errors by Service"
+    },
+    {
+      "id": "err_rows",
+      "type": "table",
+      "title": "Latest Error Rows",
+      "columns": ["ts", "service", "message"]
+    }
+  ]
 }

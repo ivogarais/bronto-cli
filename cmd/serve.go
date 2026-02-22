@@ -27,7 +27,7 @@ var serveCmd = &cobra.Command{
 			return err
 		}
 
-		m := tui.NewModel(s.Title, specPath, s.Refresh.EveryMs)
+		m := tui.NewModel(s, specPath)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
