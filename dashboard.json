@@ -20,15 +20,6 @@
     "generatedAt": "2026-02-22T16:20:00Z",
     "requestId": "demo-v1"
   },
-  "capabilities": {
-    "charts": [
-      "bar"
-    ],
-    "renderModes": [
-      "ascii"
-    ],
-    "tables": true
-  },
   "layout": {
     "type": "col",
     "id": "root",

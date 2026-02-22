@@ -26,9 +26,6 @@ func (s *AppSpec) Validate() error {
 			return fmt.Errorf("spec invalid: meta.generatedAt must be RFC3339")
 		}
 	}
-	if err := validateCapabilities(s.Capabilities); err != nil {
-		return err
-	}
 
 	if s.Defaults.ChartRender.Mode != "" && s.Defaults.ChartRender.Mode != "ascii" && s.Defaults.ChartRender.Mode != "braille" {
 		return fmt.Errorf("spec invalid: defaults.chartRender.mode must be ascii|braille")
@@ -679,44 +676,4 @@ func validateNode(n Node, charts map[string]ChartSpec, tables map[string]TableSp
 func boolPtr(v bool) *bool {
 	b := v
 	return &b
-}
-
-func validateCapabilities(c CapabilitiesSpec) error {
-	if len(c.Charts) > 0 {
-		seen := map[string]bool{}
-		for i, family := range c.Charts {
-			if family == "" {
-				return fmt.Errorf("spec invalid: capabilities.charts[%d] must be non-empty", i)
-			}
-			if seen[family] {
-				return fmt.Errorf("spec invalid: capabilities.charts has duplicate %q", family)
-			}
-			seen[family] = true
-			if !isKnownChartFamily(family) {
-				return fmt.Errorf("spec invalid: capabilities.charts[%d] unsupported family %q", i, family)
-			}
-		}
-	}
-	if len(c.RenderModes) > 0 {
-		seen := map[string]bool{}
-		for i, mode := range c.RenderModes {
-			if mode != "ascii" && mode != "braille" {
-				return fmt.Errorf("spec invalid: capabilities.renderModes[%d] must be ascii|braille", i)
-			}
-			if seen[mode] {
-				return fmt.Errorf("spec invalid: capabilities.renderModes has duplicate %q", mode)
-			}
-			seen[mode] = true
-		}
-	}
-	return nil
-}
-
-func isKnownChartFamily(f string) bool {
-	switch f {
-	case "bar", "heatmap", "line", "ohlc", "scatter", "streamline", "timeseries", "waveline", "sparkline":
-		return true
-	default:
-		return false
-	}
 }
