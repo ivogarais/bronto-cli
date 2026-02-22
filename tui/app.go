@@ -264,7 +264,7 @@ func (m Model) View() tea.View {
 
 		renderH := viewH
 		if panel.Node.Type != "table" {
-			renderH = maxInt(viewH, m.preferredNodeHeight(panel.Node, width)+4)
+			renderH = m.focusRenderHeight(panel.Node, width, viewH)
 		}
 
 		panelBody := m.renderNode(panel.Node, width, renderH)
@@ -317,7 +317,7 @@ func (m *Model) resolveComponents() {
 		if chartSpec.Render.ShowAxis != nil {
 			bar.SetShowAxis(*chartSpec.Render.ShowAxis)
 		}
-		setBarData(&bar, m.Theme.ChartBar, m.Theme.ChartDanger, ds.Labels, ds.Values)
+		setBarData(&bar, m.Theme.ChartBar, m.Theme.ChartDanger, ds.Labels, ds.Values, axisLabelMaxWidth(50))
 		m.Charts[chartID] = bar
 	}
 
@@ -427,7 +427,22 @@ func (m *Model) resizeNode(n spec.Node, width, height int) {
 		}
 		padV, padH := panelPadding(width, height, m.Theme.Density)
 		chartW := maxInt(1, width-2-(2*padH))
-		chartH := maxInt(1, height-2-(2*padV)-2)
+		baseH := maxInt(1, height-2-(2*padV)-2)
+		chartH := baseH
+
+		if hasSpec && chartSpec.Family == "bar" {
+			if ds, ok := m.Spec.Datasets[chartSpec.DatasetRef]; ok {
+				labelMax := axisLabelMaxWidth(chartW)
+				setBarData(&c, m.Theme.ChartBar, m.Theme.ChartDanger, ds.Labels, ds.Values, labelMax)
+
+				maxLegendLines := m.legendMaxLinesForChart(n, height)
+				legendLines := m.chartLegendLines(n.ChartRef, width, maxLegendLines)
+				if legendLines > 0 && baseH > 4 {
+					reserve := minInt(legendLines+1, maxInt(2, baseH-3))
+					chartH = maxInt(3, baseH-reserve)
+				}
+			}
+		}
 		c.Resize(chartW, chartH)
 		c.Draw()
 		m.Charts[n.ChartRef] = c
@@ -553,7 +568,8 @@ func (m Model) renderNode(n spec.Node, width, height int) string {
 			content = c.View()
 			if chartFound && chartSpec.Family == "bar" {
 				if ds, ok := m.Spec.Datasets[chartSpec.DatasetRef]; ok {
-					legend = renderBarLegend(m.Theme, ds, width)
+					maxLegendLines := m.legendMaxLinesForChart(n, height)
+					legend = renderBarLegend(m.Theme, ds, width, maxLegendLines)
 				}
 			}
 		} else if chartFound {
@@ -852,8 +868,52 @@ func (m Model) focusMaxScroll() int {
 		return 0
 	}
 	viewH := maxInt(1, m.Height-2)
-	contentH := maxInt(viewH, m.preferredNodeHeight(panel.Node, m.Width)+4)
+	contentH := m.focusRenderHeight(panel.Node, m.Width, viewH)
 	return maxInt(0, contentH-viewH)
+}
+
+func (m Model) legendMaxLinesForChart(n spec.Node, panelHeight int) int {
+	innerH := maxInt(3, panelHeight-4)
+	if m.panelNumberForNode(n) == m.FocusedPanel {
+		return maxInt(4, innerH/2)
+	}
+	return maxInt(3, innerH/3)
+}
+
+func (m Model) chartLegendLines(chartRef string, panelWidth, maxLines int) int {
+	if m.Spec == nil {
+		return 0
+	}
+	chartSpec, ok := m.Spec.Charts[chartRef]
+	if !ok || chartSpec.Family != "bar" {
+		return 0
+	}
+	ds, ok := m.Spec.Datasets[chartSpec.DatasetRef]
+	if !ok {
+		return 0
+	}
+
+	totalItems := len(ds.Labels)
+	if totalItems > len(ds.Values) {
+		totalItems = len(ds.Values)
+	}
+	if totalItems <= 0 {
+		return 0
+	}
+
+	visible := legendVisibleItemCount(totalItems, panelWidth, maxLines)
+	if visible <= 0 {
+		return 0
+	}
+	return legendLineCount(visible, totalItems)
+}
+
+func (m Model) focusRenderHeight(n spec.Node, width, viewH int) int {
+	if n.Type == "chart" {
+		return viewH
+	}
+	contentH := m.preferredNodeHeight(n, width) + 4
+	return maxInt(viewH, contentH)
 }
 
 func (m *Model) scrollBy(delta int) {
@@ -1030,35 +1090,53 @@ func (m Model) preferredNodeHeight(n spec.Node, width int) int {
 	}
 }
 
-func renderBarLegend(th brontotheme.BrontoTheme, ds spec.DatasetSpec, width int) string {
+func renderBarLegend(th brontotheme.BrontoTheme, ds spec.DatasetSpec, width, maxLines int) string {
 	if len(ds.Labels) == 0 || len(ds.Values) == 0 {
 		return ""
 	}
 
-	limit := len(ds.Labels)
-	if limit > len(ds.Values) {
-		limit = len(ds.Values)
+	totalItems := len(ds.Labels)
+	if totalItems > len(ds.Values) {
+		totalItems = len(ds.Values)
 	}
-	if limit > 8 {
-		limit = 8
-	}
-	if limit <= 0 {
+	visible := legendVisibleItemCount(totalItems, width, maxLines)
+	if visible <= 0 {
 		return ""
 	}
 
-	total := 0.0
-	for i := 0; i < limit; i++ {
-		total += ds.Values[i]
+	grandTotal := 0.0
+	for _, v := range ds.Values {
+		grandTotal += v
 	}
 
-	lines := make([]string, 0, limit+2)
-	lines = append(lines, th.Muted.Render("Counts"))
-	for i := 0; i < limit; i++ {
-		label := truncateCell(ds.Labels[i], maxInt(8, width/3), colDefault)
-		value := formatMetricValue(ds.Values[i])
-		lines = append(lines, th.Text.Render(fmt.Sprintf("%s: %s", label, value)))
+	innerW := maxInt(24, width-8)
+	valueW := 10
+	pctW := 7
+	spacing := 4 // between columns
+	labelW := innerW - valueW - pctW - spacing
+	if labelW < 8 {
+		labelW = 8
 	}
-	lines = append(lines, th.Muted.Render(fmt.Sprintf("Total: %s", formatMetricValue(total))))
+
+	header := fmt.Sprintf("%-*s %*s %*s", labelW, "label", valueW, "value", pctW, "pct")
+	separator := strings.Repeat("─", minInt(innerW, runeWidth(header)))
+
+	lines := make([]string, 0, visible+5)
+	lines = append(lines, th.Muted.Render(header))
+	lines = append(lines, th.Divider.Render(separator))
+	for i := 0; i < visible; i++ {
+		label := truncateCell(ds.Labels[i], labelW, colDefault)
+		value := formatMetricValue(ds.Values[i])
+		pct := "0.0%"
+		if grandTotal > 0 {
+			pct = fmt.Sprintf("%.1f%%", (ds.Values[i]/grandTotal)*100.0)
+		}
+		lines = append(lines, th.Text.Render(fmt.Sprintf("%-*s %*s %*s", labelW, label, valueW, value, pctW, pct)))
+	}
+	if totalItems > visible {
+		lines = append(lines, th.Muted.Render(fmt.Sprintf("+%d more", totalItems-visible)))
+	}
+	lines = append(lines, th.Muted.Render(fmt.Sprintf("Total: %s", formatMetricValue(grandTotal))))
 	return strings.Join(lines, "\n")
 }
 
@@ -1564,7 +1642,56 @@ func minInt(a, b int) int {
 	return b
 }
 
-func setBarData(bar *barchart.Model, barStyle lipgloss.Style, dangerBarStyle lipgloss.Style, labels []string, values []float64) {
+func axisLabelMaxWidth(chartWidth int) int {
+	if chartWidth <= 0 {
+		return 8
+	}
+	limit := chartWidth / 3
+	return clampInt(limit, 8, 28)
+}
+
+func legendItemLimit(width int) int {
+	switch {
+	case width >= 150:
+		return 14
+	case width >= 110:
+		return 12
+	case width >= 80:
+		return 10
+	default:
+		return 8
+	}
+}
+
+func legendLineCount(visibleItems, totalItems int) int {
+	if visibleItems <= 0 {
+		return 0
+	}
+	lines := visibleItems + 3 // header + divider + total
+	if totalItems > visibleItems {
+		lines++
+	}
+	return lines
+}
+
+func legendVisibleItemCount(totalItems, width, maxLines int) int {
+	if totalItems <= 0 {
+		return 0
+	}
+	visible := totalItems
+	widthCap := legendItemLimit(width)
+	if visible > widthCap {
+		visible = widthCap
+	}
+	if maxLines > 0 {
+		for visible > 0 && legendLineCount(visible, totalItems) > maxLines {
+			visible--
+		}
+	}
+	return visible
+}
+
+func setBarData(bar *barchart.Model, barStyle lipgloss.Style, dangerBarStyle lipgloss.Style, labels []string, values []float64, axisLabelLimit int) {
 	data := make([]barchart.BarData, 0, len(labels))
 	for i, l := range labels {
 		v := 0.0
@@ -1576,8 +1703,12 @@ func setBarData(bar *barchart.Model, barStyle lipgloss.Style, dangerBarStyle lip
 		if isDangerLabel(l) {
 			style = dangerBarStyle
 		}
+		axisLabel := l
+		if axisLabelLimit > 0 {
+			axisLabel = truncateCell(l, axisLabelLimit, colDefault)
+		}
 		data = append(data, barchart.BarData{
-			Label: l,
+			Label: axisLabel,
 			Values: []barchart.BarValue{
 				{Name: l, Value: v, Style: style},
 			},
