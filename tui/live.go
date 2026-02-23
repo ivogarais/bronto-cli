@@ -200,14 +200,17 @@ func (c brontoLiveClient) computeMetrics(
 	startMS int64,
 	endMS int64,
 ) (map[string]metricSeries, error) {
+	groups := normalizeMetricGroups(live.GroupByKeys)
 	payload := map[string]any{
 		"from_ts":       startMS,
 		"to_ts":         endMS,
 		"where":         live.SearchFilter,
 		"select":        live.MetricFunctions,
 		"from":          live.LogIDs,
-		"groups":        live.GroupByKeys,
 		"num_of_slices": 10,
+	}
+	if len(groups) > 0 {
+		payload["groups"] = groups
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -436,6 +439,21 @@ func parseMetricsResponse(raw map[string]any) map[string]metricSeries {
 	totals, _ := raw["totals"].(map[string]any)
 	points := parseMetricPoints(totals["timeseries"])
 	out["total"] = metricSeries{Name: "total", Points: points}
+	return out
+}
+
+func normalizeMetricGroups(groups []string) []string {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(groups))
+	for _, group := range groups {
+		g := strings.TrimSpace(strings.ToLower(group))
+		if g == "@time" || g == "time" {
+			continue
+		}
+		out = append(out, group)
+	}
 	return out
 }
 

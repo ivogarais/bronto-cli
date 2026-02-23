@@ -724,6 +724,15 @@ func selectXYSeries(ds spec.DatasetSpec, refs []spec.SeriesRef) []lineSeriesSele
 			Points:  series.Points,
 		})
 	}
+	if len(out) == 0 {
+		// Live queries can replace seeded series names. Fall back to all available series.
+		for _, series := range ds.XY {
+			out = append(out, lineSeriesSelection{
+				Name:   series.Name,
+				Points: series.Points,
+			})
+		}
+	}
 	return out
 }
 
@@ -907,6 +916,15 @@ func selectTimeSeries(ds spec.DatasetSpec, refs []spec.SeriesRef) []timeSeriesSe
 			Variant: ref.Variant,
 			Points:  series.Points,
 		})
+	}
+	if len(out) == 0 {
+		// Live queries can replace seeded series names. Fall back to all available series.
+		for _, series := range ds.Time {
+			out = append(out, timeSeriesSelection{
+				Name:   series.Name,
+				Points: series.Points,
+			})
+		}
 	}
 	return out
 }
