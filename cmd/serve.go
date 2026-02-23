@@ -12,7 +12,7 @@ import (
 )
 
 var specPath string
-var refreshMS = 5000
+var refreshMS = 100000
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
@@ -43,8 +43,8 @@ func init() {
 	serveCmd.Flags().IntVar(
 		&refreshMS,
 		"refresh-ms",
-		5000,
-		"Advanced: auto-reload interval in milliseconds (default: 5000)",
+		100000,
+		"Advanced: auto-reload interval in milliseconds (default: 100000)",
 	)
 	_ = serveCmd.Flags().MarkHidden("refresh-ms")
 }
