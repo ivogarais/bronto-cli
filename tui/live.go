@@ -78,15 +78,24 @@ func hydrateSpecWithLiveData(app *spec.AppSpec) (bool, error) {
 		metrics: map[string]map[string]metricSeries{},
 		logs:    map[string][]map[string]any{},
 	}
+	successful := 0
+	var firstErr error
 
 	for datasetID, ds := range app.Datasets {
 		if ds.Live == nil {
 			continue
 		}
 		if err := c.refreshDataset(context.Background(), datasetID, &ds, nowMS, cache); err != nil {
-			return true, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		app.Datasets[datasetID] = ds
+		successful++
+	}
+	if successful == 0 && firstErr != nil {
+		return true, firstErr
 	}
 	return true, nil
 }
