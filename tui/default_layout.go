@@ -17,6 +17,7 @@ func (m *Model) applyDefaultLayoutStructure() {
 	if m.Spec == nil {
 		return
 	}
+	chartTitles, tableTitles := extractPanelTitles(m.Spec.Layout)
 
 	chartIDs := sortedChartIDs(m.Spec.Charts)
 	tableIDs := sortedTableIDs(m.Spec.Tables)
@@ -27,7 +28,10 @@ func (m *Model) applyDefaultLayoutStructure() {
 	if m.HasChartsTab {
 		panels := make([]spec.Node, 0, len(chartIDs))
 		for _, chartID := range chartIDs {
-			chartTitle := strings.TrimSpace(m.Spec.Charts[chartID].Title)
+			chartTitle := strings.TrimSpace(chartTitles[chartID])
+			if chartTitle == "" {
+				chartTitle = strings.TrimSpace(m.Spec.Charts[chartID].Title)
+			}
 			if chartTitle == "" {
 				chartTitle = chartID
 			}
@@ -44,10 +48,17 @@ func (m *Model) applyDefaultLayoutStructure() {
 	if m.HasLogsTab {
 		panels := make([]spec.Node, 0, len(tableIDs))
 		for _, tableID := range tableIDs {
+			tableTitle := strings.TrimSpace(tableTitles[tableID])
+			if tableTitle == "" {
+				tableTitle = strings.TrimSpace(m.Spec.Tables[tableID].Title)
+			}
+			if tableTitle == "" {
+				tableTitle = tableID
+			}
 			panels = append(panels, spec.Node{
 				Type:     "table",
 				ID:       "table_" + tableID,
-				Title:    tableID,
+				Title:    tableTitle,
 				TableRef: tableID,
 			})
 		}
@@ -214,4 +225,28 @@ func sortedTableIDs(tables map[string]spec.TableSpec) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func extractPanelTitles(root spec.Node) (map[string]string, map[string]string) {
+	chartTitles := map[string]string{}
+	tableTitles := map[string]string{}
+
+	var walk func(node spec.Node)
+	walk = func(node spec.Node) {
+		switch node.Type {
+		case "chart":
+			if node.ChartRef != "" && strings.TrimSpace(node.Title) != "" {
+				chartTitles[node.ChartRef] = strings.TrimSpace(node.Title)
+			}
+		case "table":
+			if node.TableRef != "" && strings.TrimSpace(node.Title) != "" {
+				tableTitles[node.TableRef] = strings.TrimSpace(node.Title)
+			}
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(root)
+	return chartTitles, tableTitles
 }

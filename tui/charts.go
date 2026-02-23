@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -158,6 +160,15 @@ func buildLineChartModel(
 		yStep = 0
 	}
 
+	opts := []linechart.Option{
+		linechart.WithXYSteps(xStep, yStep),
+		linechart.WithStyles(th.ChartAxis, th.ChartLabel, th.ChartBar),
+		linechart.WithYLabelFormatter(yAxisLabelFormatter(ds)),
+	}
+	if fmter := xyTimeXLabelFormatter(series); fmter != nil {
+		opts = append(opts, linechart.WithXLabelFormatter(fmter))
+	}
+
 	lc := linechart.New(
 		width,
 		height,
@@ -165,8 +176,7 @@ func buildLineChartModel(
 		maxX,
 		minY,
 		maxY,
-		linechart.WithXYSteps(xStep, yStep),
-		linechart.WithStyles(th.ChartAxis, th.ChartLabel, th.ChartBar),
+		opts...,
 	)
 
 	lc.Clear()
@@ -318,7 +328,11 @@ func renderScatterChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec, ds
 		maxY,
 		linechart.WithXYSteps(xStep, yStep),
 		linechart.WithStyles(th.ChartAxis, th.ChartLabel, th.ChartBar),
+		linechart.WithYLabelFormatter(yAxisLabelFormatter(ds)),
 	)
+	if fmter := xyTimeXLabelFormatter(series); fmter != nil {
+		lc.XLabelFormatter = fmter
+	}
 	lc.Clear()
 	if chartShowAxis(chartSpec) {
 		lc.DrawXYAxisAndLabel()
@@ -391,6 +405,10 @@ func renderWavelineChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec, d
 		wavelinechart.WithAxesStyles(th.ChartAxis, th.ChartLabel),
 		wavelinechart.WithStyles(runes.ArcLineStyle, th.ChartBar),
 	)
+	wlc.YLabelFormatter = yAxisLabelFormatter(ds)
+	if fmter := xyTimeXLabelFormatter(series); fmter != nil {
+		wlc.XLabelFormatter = fmter
+	}
 
 	names := make([]string, 0, len(series))
 	for i, s := range series {
@@ -441,6 +459,7 @@ func renderStreamlineChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec,
 		streamlinechart.WithAxesStyles(th.ChartAxis, th.ChartLabel),
 		streamlinechart.WithStyles(runes.ArcLineStyle, th.ChartBar),
 	)
+	slc.YLabelFormatter = yAxisLabelFormatter(ds)
 	for _, v := range values {
 		slc.Push(v)
 	}
@@ -570,6 +589,7 @@ func renderTimeseriesChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec,
 		timeserieslinechart.WithAxesStyles(th.ChartAxis, th.ChartLabel),
 		timeserieslinechart.WithStyle(th.ChartBar),
 		timeserieslinechart.WithLineStyle(runes.ArcLineStyle),
+		timeserieslinechart.WithYLabelFormatter(yAxisLabelFormatter(ds)),
 	}
 	if timeFormat != "" {
 		layout := timeFormat
@@ -645,6 +665,7 @@ func renderOHLCChart(th brontotheme.BrontoTheme, chartSpec spec.ChartSpec, ds sp
 		timeserieslinechart.WithXYSteps(xStep, yStep),
 		timeserieslinechart.WithAxesStyles(th.ChartAxis, th.ChartLabel),
 		timeserieslinechart.WithXLabelFormatter(timeserieslinechart.HourTimeLabelFormatter()),
+		timeserieslinechart.WithYLabelFormatter(yAxisLabelFormatter(ds)),
 	)
 
 	const (
@@ -704,6 +725,159 @@ func selectXYSeries(ds spec.DatasetSpec, refs []spec.SeriesRef) []lineSeriesSele
 		})
 	}
 	return out
+}
+
+func xyTimeXLabelFormatter(series []lineSeriesSelection) linechart.LabelFormatter {
+	mode := detectXYTimeMode(series)
+	if mode == "" {
+		return nil
+	}
+	return func(_ int, v float64) string {
+		if mode == "ms" {
+			return time.UnixMilli(int64(v)).UTC().Format("15:04")
+		}
+		return time.Unix(int64(v), 0).UTC().Format("15:04")
+	}
+}
+
+func detectXYTimeMode(series []lineSeriesSelection) string {
+	total := 0
+	ms := 0
+	sec := 0
+	for _, s := range series {
+		for _, p := range s.Points {
+			total++
+			if isUnixMillis(p.X) {
+				ms++
+			} else if isUnixSeconds(p.X) {
+				sec++
+			}
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	if ms*100/total >= 80 {
+		return "ms"
+	}
+	if sec*100/total >= 80 {
+		return "sec"
+	}
+	return ""
+}
+
+func isUnixSeconds(v float64) bool {
+	return v >= 946684800 && v <= 4102444800
+}
+
+func isUnixMillis(v float64) bool {
+	return v >= 946684800000 && v <= 4102444800000
+}
+
+func yAxisLabelFormatter(ds spec.DatasetSpec) linechart.LabelFormatter {
+	return func(_ int, v float64) string {
+		return formatAxisValue(v, ds.Format, ds.Unit)
+	}
+}
+
+func formatAxisValue(v float64, format string, unit string) string {
+	switch format {
+	case "bytes":
+		return formatBytes(v)
+	case "duration":
+		return formatDuration(v, unit)
+	default:
+		value := compactNumber(v)
+		u := strings.TrimSpace(unit)
+		if u == "" {
+			return value
+		}
+		return value + u
+	}
+}
+
+func compactNumber(v float64) string {
+	abs := math.Abs(v)
+	sign := ""
+	if v < 0 {
+		sign = "-"
+	}
+	switch {
+	case abs >= 1_000_000_000:
+		return fmt.Sprintf("%s%.1fB", sign, abs/1_000_000_000)
+	case abs >= 1_000_000:
+		return fmt.Sprintf("%s%.1fM", sign, abs/1_000_000)
+	case abs >= 1_000:
+		return fmt.Sprintf("%s%.1fk", sign, abs/1_000)
+	case abs >= 10:
+		return fmt.Sprintf("%s%.0f", sign, abs)
+	case abs >= 1:
+		return fmt.Sprintf("%s%.1f", sign, abs)
+	default:
+		return fmt.Sprintf("%s%.2f", sign, abs)
+	}
+}
+
+func formatBytes(v float64) string {
+	abs := math.Abs(v)
+	sign := ""
+	if v < 0 {
+		sign = "-"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	idx := 0
+	for abs >= 1024 && idx < len(units)-1 {
+		abs /= 1024
+		idx++
+	}
+	if abs >= 10 || idx == 0 {
+		return fmt.Sprintf("%s%.0f%s", sign, abs, units[idx])
+	}
+	return fmt.Sprintf("%s%.1f%s", sign, abs, units[idx])
+}
+
+func formatDuration(v float64, unit string) string {
+	multiplier := time.Millisecond
+	switch strings.ToLower(strings.TrimSpace(unit)) {
+	case "ns", "nanosecond", "nanoseconds":
+		multiplier = time.Nanosecond
+	case "us", "µs", "microsecond", "microseconds":
+		multiplier = time.Microsecond
+	case "s", "sec", "second", "seconds":
+		multiplier = time.Second
+	case "m", "min", "minute", "minutes":
+		multiplier = time.Minute
+	case "h", "hour", "hours":
+		multiplier = time.Hour
+	default:
+		multiplier = time.Millisecond
+	}
+	d := time.Duration(v * float64(multiplier))
+	if d < 0 {
+		return "-" + formatDuration(-v, unit)
+	}
+	if d >= time.Hour {
+		h := d / time.Hour
+		d -= h * time.Hour
+		m := d / time.Minute
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	if d >= time.Minute {
+		m := d / time.Minute
+		d -= m * time.Minute
+		s := d / time.Second
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	if d >= time.Second {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	if d >= time.Millisecond {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d >= time.Microsecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	return strconv.FormatInt(d.Nanoseconds(), 10) + "ns"
 }
 
 func selectTimeSeries(ds spec.DatasetSpec, refs []spec.SeriesRef) []timeSeriesSelection {

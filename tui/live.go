@@ -473,7 +473,11 @@ func applyMetrics(ds *spec.DatasetSpec, grouped map[string]metricSeries) {
 		for name, series := range grouped {
 			points := make([]spec.XYPoint, 0, len(series.Points))
 			for i, p := range series.Points {
-				points = append(points, spec.XYPoint{X: float64(i + 1), Y: p.Value})
+				x := float64(i + 1)
+				if p.Timestamp > 0 {
+					x = float64(p.Timestamp) / 1000.0
+				}
+				points = append(points, spec.XYPoint{X: x, Y: p.Value})
 			}
 			xy = append(xy, spec.XYSeries{Name: name, Points: points})
 		}

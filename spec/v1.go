@@ -142,6 +142,7 @@ type SparklineOptions struct {
 // ---------- Tables ----------
 
 type TableSpec struct {
+	Title      string            `json:"title,omitempty"`
 	DatasetRef string            `json:"datasetRef"`
 	Columns    []TableColumnSpec `json:"columns"`
 	RowLimit   int               `json:"rowLimit,omitempty"` // default 200
